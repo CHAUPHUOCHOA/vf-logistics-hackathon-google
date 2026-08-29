@@ -18,6 +18,12 @@ from .investigation_agent import (
     get_agent_info as get_investigation_agent_info
 )
 
+from .document_agent import (
+    extract_shipment,
+    mime_for,
+    get_agent_info as get_document_agent_info
+)
+
 __all__ = [
     "analyze_shipment",
     "batch_analyze",
@@ -28,4 +34,7 @@ __all__ = [
     "investigate_case",
     "generate_report",
     "get_investigation_agent_info",
+    "extract_shipment",
+    "mime_for",
+    "get_document_agent_info",
 ]

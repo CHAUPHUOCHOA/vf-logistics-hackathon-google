@@ -1,0 +1,239 @@
+"""
+Simulated shipment event source.
+
+The autonomous pipeline normally consumes Pub/Sub messages produced by the
+shipment system. For a self-contained demo we inject a scripted batch instead,
+chosen so that all three branches of the state machine fire on camera:
+
+  * SHIP-CLEAN  - clean paperwork, market-rate pricing, established shipper
+                  -> expected AUTO_CLEARED
+  * SHIP-MID    - some pricing softness and a thin history, paperwork complete
+                  -> expected HELD_FOR_REVIEW
+  * SHIP-DIRTY  - grossly underpriced, brand new shell-like counterparty,
+                  dual-use goods, sanctioned-adjacent routing
+                  -> expected ESCALATED
+
+Nothing here is special-cased downstream: the agents score these on their
+merits, and the orchestrator branches on the scores it is given.
+
+All monetary amounts are USD.
+"""
+
+from __future__ import annotations
+
+import random
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+
+def _iso(offset_minutes: int = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(minutes=offset_minutes)).isoformat()
+
+
+def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
+    """
+    Generate `count` shipments spread across the risk spectrum.
+
+    Used to show the pipeline is not a three-record toy. The mix is weighted the
+    way a real book of business looks: most shipments are unremarkable, a
+    minority are worth a screen, and a small tail is genuinely bad. Field values
+    are randomised so the agents are scoring different shipments rather than the
+    same one repeatedly.
+
+    A note on volume: each case costs one Gemini call minimum and three for a
+    full escalation, so this endpoint is capped low on purpose. The default of
+    10 is about 20 model calls and finishes in roughly a minute, which is enough
+    to show the worker draining a queue. Raising it to 1,000 would mean ~2,000
+    calls and over an hour without demonstrating anything the 10 does not.
+
+    Be aware that on this deployment the dominant cost is the always-on Cloud
+    Run instance, not the model calls.
+    """
+    lanes = [
+        ("Ho Chi Minh City, Vietnam", "Singapore", 1_200, "Cat Lai -> PSA, direct"),
+        ("Hai Phong, Vietnam", "Busan, South Korea", 1_680, "Hai Phong -> Busan, direct"),
+        ("Da Nang, Vietnam", "Kaohsiung, Taiwan", 1_450, "Da Nang -> Kaohsiung, direct"),
+        ("Ho Chi Minh City, Vietnam", "Los Angeles, USA", 3_400, "Cat Lai -> LA, via Yokohama"),
+        ("Hai Phong, Vietnam", "Rotterdam, Netherlands", 4_100, "Hai Phong -> Rotterdam, via Singapore"),
+    ]
+
+    benign_cargo = [
+        ("Woven cotton garments, retail packed", "6205.20"),
+        ("Flat-pack rubberwood furniture", "9403.30"),
+        ("Roasted coffee beans, 60kg sacks", "0901.21"),
+        ("Rubber footwear soles", "6406.20"),
+        ("Ceramic tableware", "6912.00"),
+    ]
+
+    sensitive_cargo = [
+        ("Frequency converters, industrial", "8504.40"),
+        ("High-precision pressure transducers", "9026.20"),
+        ("Numerically controlled lathe parts", "8458.11"),
+    ]
+
+    out: list[dict[str, Any]] = []
+    for i in range(count):
+        origin, dest, base_cost, route = random.choice(lanes)
+
+        # 60% clean, 30% suspicious, 10% clearly bad. At a batch size of 10 this
+        # reliably produces at least one of each rather than ten clean ones.
+        roll = random.random()
+        if roll < 0.60:
+            profile = "clean"
+            cargo, hs = random.choice(benign_cargo)
+            cost = round(base_cost * random.uniform(0.95, 1.15), 2)
+            tx = random.randint(80, 900)
+            tax_id = f"0{random.randint(100000000, 999999999)}"
+            transit = "None"
+        elif roll < 0.90:
+            profile = "suspicious"
+            cargo, hs = random.choice(benign_cargo)
+            cost = round(base_cost * random.uniform(0.55, 0.75), 2)
+            tx = random.randint(3, 15)
+            tax_id = f"0{random.randint(100000000, 999999999)}"
+            transit = "None"
+        else:
+            profile = "bad"
+            cargo, hs = random.choice(sensitive_cargo)
+            cost = round(base_cost * random.uniform(0.06, 0.20), 2)
+            tx = random.randint(1, 2)
+            tax_id = "not provided"
+            transit = "Port Klang, Malaysia; Jebel Ali, UAE"
+            route += ", two unscheduled transhipments added after booking"
+
+        weight = random.randint(300, 2_600)
+        value = round(weight * random.uniform(8, 70), 2)
+
+        out.append(
+            {
+                "shipment_id": f"VF-{run_tag}-{i + 1:04d}",
+                "origin": origin,
+                "destination": dest,
+                "weight_kg": weight,
+                "declared_value": value,
+                "shipping_cost": cost,
+                "avg_route_cost": base_cost,
+                "shipper_name": f"{random.choice(SHIPPERS)} {random.choice(SUFFIX)}",
+                "shipper_company": f"{random.choice(SHIPPERS)} {random.choice(SUFFIX)}",
+                "shipper_country": "Vietnam",
+                "shipper_tax_id": tax_id,
+                "receiver_name": f"{random.choice(RECEIVERS)} {random.choice(SUFFIX)}",
+                "receiver_company": f"{random.choice(RECEIVERS)} {random.choice(SUFFIX)}",
+                "receiver_country": dest.split(", ")[-1],
+                "cargo_description": cargo,
+                "hs_code": hs,
+                "shipper_tx_count": tx,
+                "status": "pending",
+                "route_details": route,
+                "transit_points": transit,
+                "created_at": _iso(-random.randint(0, 240)),
+                # Recorded for post-run analysis only. The agents never see this
+                # field, so it cannot leak the answer into their scoring.
+                "_generated_profile": profile,
+            }
+        )
+
+    return out
+
+
+SHIPPERS = [
+    "Saigon Textile", "Truong Hai", "Bao Tin", "Minh Phuong", "An Khang",
+    "Dai Duong", "Phu Cuong", "Hoang Long", "Tan Thanh", "Viet Tien",
+]
+
+RECEIVERS = [
+    "Orchard Apparel", "Daehan Home", "Pacific Sourcing", "Northgate Imports",
+    "Al-Rasheed Technical", "Meridian Trade", "Kowloon Supply", "Baltic Retail",
+]
+
+SUFFIX = ["Co Ltd", "JSC", "Pte Ltd", "Inc", "Trading Co", "Group"]
+
+
+def scripted_shipments(run_tag: str) -> list[dict[str, Any]]:
+    """Three shipments with genuinely different risk profiles."""
+    return [
+        {
+            "shipment_id": f"VF-{run_tag}-CLEAN",
+            "origin": "Ho Chi Minh City, Vietnam",
+            "destination": "Singapore",
+            "weight_kg": 820,
+            "declared_value": 9_600,
+            "shipping_cost": 1_260,
+            "avg_route_cost": 1_200,
+            "shipper_name": "Saigon Textile Export JSC",
+            "shipper_company": "Saigon Textile Export JSC",
+            "shipper_country": "Vietnam",
+            "shipper_tax_id": "0301234567",
+            "receiver_name": "Orchard Apparel Pte Ltd",
+            "receiver_company": "Orchard Apparel Pte Ltd",
+            "receiver_country": "Singapore",
+            "cargo_description": "Woven cotton garments, 1,640 cartons, retail packed",
+            "hs_code": "6205.20",
+            "shipper_tx_count": 412,
+            "status": "pending",
+            "route_details": "Cat Lai Port -> Singapore PSA, direct sailing",
+            "transit_points": "None",
+            "created_at": _iso(),
+        },
+        {
+            # Paperwork is deliberately complete and the cargo is unambiguously
+            # benign, so compliance should clear it. The risk sits purely in the
+            # commercials: priced well under the route average by a shipper with
+            # a thin history. That combination is what the middle branch exists
+            # for - cleared by compliance, still too risky to release
+            # automatically, so a human gets it.
+            "shipment_id": f"VF-{run_tag}-MID",
+            "origin": "Hai Phong, Vietnam",
+            "destination": "Busan, South Korea",
+            "weight_kg": 1_450,
+            "declared_value": 24_400,
+            "shipping_cost": 1_220,
+            "avg_route_cost": 1_680,
+            "shipper_name": "Truong Hai Furniture Co Ltd",
+            "shipper_company": "Truong Hai Furniture Co Ltd",
+            "shipper_country": "Vietnam",
+            "shipper_tax_id": "0209988776",
+            "receiver_name": "Daehan Home Retail Inc",
+            "receiver_company": "Daehan Home Retail Inc",
+            "receiver_country": "South Korea",
+            "cargo_description": (
+                "New flat-pack wooden office furniture, 480 cartons, "
+                "kiln-dried rubberwood, fumigation certificate attached"
+            ),
+            "hs_code": "9403.30",
+            "shipper_tx_count": 9,
+            "status": "pending",
+            "route_details": "Hai Phong -> Busan, direct sailing, no transhipment",
+            "transit_points": "None",
+            "created_at": _iso(-3),
+        },
+        {
+            "shipment_id": f"VF-{run_tag}-DIRTY",
+            "origin": "Da Nang, Vietnam",
+            "destination": "Karachi, Pakistan",
+            "weight_kg": 2_300,
+            "declared_value": 164_000,
+            "shipping_cost": 392,
+            "avg_route_cost": 2_720,
+            "shipper_name": "Bao Tin Global Trading",
+            "shipper_company": "Bao Tin Global Trading (registered 11 days ago)",
+            "shipper_country": "Vietnam",
+            "shipper_tax_id": "not provided",
+            "receiver_name": "Al-Rasheed Technical Imports",
+            "receiver_company": "Al-Rasheed Technical Imports",
+            "receiver_country": "Pakistan",
+            "cargo_description": (
+                "High-precision pressure transducers and frequency converters, "
+                "end use stated as agricultural"
+            ),
+            "hs_code": "8504.40",
+            "shipper_tx_count": 1,
+            "status": "pending",
+            "route_details": (
+                "Da Nang -> Port Klang -> Jebel Ali -> Karachi, "
+                "two unscheduled transhipments added after booking"
+            ),
+            "transit_points": "Port Klang, Malaysia; Jebel Ali, UAE",
+            "created_at": _iso(-7),
+        },
+    ]

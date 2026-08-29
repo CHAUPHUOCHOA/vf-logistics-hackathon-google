@@ -1,16 +1,18 @@
-"""
-VF Logistics AI Investigation Agent - Gemini 2.5 Flash
+﻿"""
+VF Logistics AI Investigation Agent - Gemini 3.5 Flash
 Conducts deep-dive investigations into flagged cases using multi-step reasoning.
 
 Track: The Taskmaster - Autonomous Workflow Automation
 """
 
+import json
 import os
-from datetime import datetime
 from typing import Any
 
 from google import genai
 from google.genai import types
+
+from ._common import Timer, envelope, parse_model_json
 
 PROJECT_ID = os.getenv("PROJECT_ID", "project-93ded24f-21c3-4f1b-a7d")
 LOCATION = os.getenv("LOCATION", "global")
@@ -58,6 +60,9 @@ OUTPUT FORMAT (JSON):
 - confidence_level: investigation confidence (0-1)
 - recommended_actions: prioritized next steps
 - escalation_required: boolean with reason if true
+
+All monetary amounts in the input are USD. Express exposure_estimate in USD,
+leading with a figure (for example "USD 164,000 cargo value plus penalties").
 """
 
 
@@ -83,46 +88,53 @@ async def investigate_case(case_data: dict[str, Any]) -> dict[str, Any]:
     {_format_alerts(case_data.get('historical_alerts', []))}
     
     FINANCIAL SUMMARY:
-    - Total Transaction Volume: {case_data.get('total_volume', 'N/A')} VND
-    - Average Transaction: {case_data.get('avg_transaction', 'N/A')} VND
+    - Total Transaction Volume: {case_data.get('total_volume', 'N/A')} USD
+    - Average Transaction: {case_data.get('avg_transaction', 'N/A')} USD
     - Anomaly Count (30d): {case_data.get('anomaly_count_30d', 'N/A')}
     """
     
-    response = await client.aio.models.generate_content(
-        model=MODEL_ID,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[types.Part(text=f"Conduct a thorough investigation:\n{case_text}")]
-            )
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=INVESTIGATION_PROMPT,
-            temperature=0.2,  # Slightly higher for creative investigation
-            response_mime_type="application/json",
-            thinking_config=types.ThinkingConfig(
-                thinking_budget=8000  # Enable extended thinking for complex analysis
+    with Timer() as timer:
+        response = await client.aio.models.generate_content(
+            model=MODEL_ID,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=f"Conduct a thorough investigation:\n{case_text}")]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=INVESTIGATION_PROMPT,
+                temperature=0.2,  # Slightly higher for creative investigation
+                response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(
+                    thinking_budget=8000  # Enable extended thinking for complex analysis
+                )
             )
         )
+
+    parsed, error = parse_model_json(response.text)
+    out = envelope(
+        agent="investigation",
+        model=MODEL_ID,
+        result=parsed,
+        error=error,
+        raw=response.text or "",
+        latency_ms=timer.ms,
+        legacy_key="investigation_result",
+        case_id=case_data.get("case_id"),
     )
-    
-    return {
-        "case_id": case_data.get("case_id"),
-        "investigation_result": response.text,
-        "model": MODEL_ID,
-        "investigated_at": datetime.utcnow().isoformat(),
-        "thinking_enabled": True
-    }
+    out["thinking_enabled"] = True
+    return out
 
 
 def _format_shipment(shipment: dict) -> str:
-    if not shipment:
+    if not isinstance(shipment, dict) or not shipment:
         return "No data"
     return f"""
     - ID: {shipment.get('shipment_id', 'N/A')}
     - Route: {shipment.get('origin', 'N/A')} → {shipment.get('destination', 'N/A')}
-    - Value: {shipment.get('declared_value', 'N/A')} VND
-    - Cost: {shipment.get('shipping_cost', 'N/A')} VND
+    - Value: {shipment.get('declared_value', 'N/A')} USD
+    - Cost: {shipment.get('shipping_cost', 'N/A')} USD
     - Shipper: {shipment.get('shipper_name', 'N/A')}
     - Status: {shipment.get('status', 'N/A')}
     """
@@ -133,12 +145,18 @@ def _format_related_shipments(shipments: list) -> str:
         return "None found"
     lines = []
     for s in shipments[:10]:  # Limit to 10
-        lines.append(f"  - {s.get('shipment_id')}: {s.get('origin')} → {s.get('destination')} ({s.get('declared_value')} VND)")
+        if isinstance(s, dict):
+            lines.append(
+                f"  - {s.get('shipment_id')}: {s.get('origin')} → {s.get('destination')} "
+                f"({s.get('declared_value')} USD)"
+            )
+        else:
+            lines.append(f"  - {s}")
     return "\n".join(lines)
 
 
 def _format_entity(entity: dict) -> str:
-    if not entity:
+    if not isinstance(entity, dict) or not entity:
         return "No data"
     return f"""
     - Name: {entity.get('name', 'N/A')}
@@ -151,11 +169,23 @@ def _format_entity(entity: dict) -> str:
 
 
 def _format_alerts(alerts: list) -> str:
+    """
+    Render prior alerts.
+
+    Upstream agents return these as either structured objects or plain strings
+    depending on the finding, so both shapes are accepted rather than assumed.
+    """
     if not alerts:
         return "No previous alerts"
     lines = []
     for a in alerts[:5]:
-        lines.append(f"  - [{a.get('date')}] {a.get('type')}: {a.get('description')}")
+        if isinstance(a, dict):
+            lines.append(
+                f"  - [{a.get('date', 'undated')}] {a.get('type', 'alert')}: "
+                f"{a.get('description', '')}"
+            )
+        else:
+            lines.append(f"  - {a}")
     return "\n".join(lines)
 
 
@@ -176,30 +206,39 @@ async def generate_report(investigation_results: list[dict]) -> dict[str, Any]:
     """
     
     results_text = "\n\n".join([
-        f"Case {r.get('case_id')}: {r.get('investigation_result')}"
+        f"Case {r.get('case_id')}: "
+        f"{json.dumps(r.get('result') or r.get('investigation_result') or {}, ensure_ascii=False)}"
         for r in investigation_results
     ])
-    
-    response = await client.aio.models.generate_content(
-        model=MODEL_ID,
-        contents=[
-            types.Content(
-                role="user",
-                parts=[types.Part(text=f"Generate report from these investigations:\n{results_text}")]
+
+    with Timer() as timer:
+        response = await client.aio.models.generate_content(
+            model=MODEL_ID,
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[types.Part(text=f"Generate report from these investigations:\n{results_text}")]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=report_prompt,
+                temperature=0.2,
+                response_mime_type="application/json",
             )
-        ],
-        config=types.GenerateContentConfig(
-            system_instruction=report_prompt,
-            temperature=0.2,
-            response_mime_type="application/json",
         )
+
+    parsed, error = parse_model_json(response.text)
+    out = envelope(
+        agent="investigation_report",
+        model=MODEL_ID,
+        result=parsed,
+        error=error,
+        raw=response.text or "",
+        latency_ms=timer.ms,
+        legacy_key="report",
     )
-    
-    return {
-        "report": response.text,
-        "cases_analyzed": len(investigation_results),
-        "generated_at": datetime.utcnow().isoformat()
-    }
+    out["cases_analyzed"] = len(investigation_results)
+    return out
 
 
 def get_agent_info() -> dict[str, str]:

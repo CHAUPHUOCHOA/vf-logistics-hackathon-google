@@ -6,8 +6,24 @@
 
 A multi-agent system that screens logistics shipments for fraud, sanctions/trade
 compliance violations, and runs deep-dive investigations — without a human
-walking it through each step. Originally built on Snowflake Cortex, migrated to
-Gemini 3.5 Flash on Vertex AI + Cloud Run.
+walking it through each step. Built 100% on Google Cloud: Gemini 3.5 Flash on
+Vertex AI + Cloud Run + Firestore + Pub/Sub.
+
+A shipment event arrives and nobody touches it again. A background worker scores
+it for fraud, decides on that score whether compliance screening is warranted,
+decides on the screening whether to open a deep investigation, and then acts:
+releasing the shipment, assigning an analyst, or holding the cargo and drafting a
+suspicious activity report for human signature.
+
+Measured on the deployed service, three shipments with deliberately different
+risk profiles reached three different outcomes in roughly 30 seconds, with the
+injection call returning in 547ms and no further input:
+
+| Shipment | Fraud risk | Compliance | Outcome | Actions executed |
+|---|---|---|---|---|
+| Clean garment export | 5/100 | not needed | `AUTO_CLEARED` | released for delivery |
+| Underpriced furniture, thin history | 58/100 | cleared | `HELD_FOR_REVIEW` | analyst assigned |
+| Dual-use goods, 11-day-old shell company | 95/100 | review required | `ESCALATED` | held, SAR drafted, compliance notified |
 
 ---
 
@@ -22,17 +38,67 @@ engine cannot do and an analyst has no time to do at volume.
 
 ## What the system does
 
-Three specialised agents, each with its own system instruction and reasoning
-budget, share one shipment record:
+Four specialised agents plus a deterministic verification layer, coordinated by a
+governance control plane:
 
 | Agent | Responsibility | Notable config |
 |---|---|---|
-| **Fraud Detection** | Price manipulation, route fraud, weight/dimension fraud, document fraud, identity fraud, duplicate & time fraud. Emits `risk_score` 0–100, `risk_level`, `flags[]`, `recommendations[]`, `confidence`. | `temperature=0.1` for stable scoring |
-| **Compliance Screening** | Sanctions exposure (OFAC/UN/EU patterns), trade & regulatory compliance, AML indicators, entity screening. | `temperature=0.1`, structured JSON |
-| **AI Investigation** | Multi-step case investigation across related shipments, pattern analysis, network mapping, consolidated reporting. | **Extended thinking** — `thinking_budget=8000` |
+| **Document Intake** | Transcribes bills of lading, invoices and packing lists into a structured record. Reports missing fields as missing rather than inventing them. | `temperature=0.0`, multimodal PDF/image input |
+| **Fraud Detection** | Price manipulation, route fraud, weight/dimension fraud, document fraud, identity fraud, duplicate & time fraud. | `temperature=0.1` for stable scoring |
+| **Compliance Screening** | Sanctions exposure (OFAC/UN/EU patterns), trade & regulatory compliance, AML indicators. | `temperature=0.1`, runs in parallel with fraud |
+| **AI Investigation** | Multi-step case investigation, pattern analysis, network mapping. | **Extended thinking** — `thinking_budget=8000` |
 
-All three return strict JSON (`response_mime_type="application/json"`), so
-downstream routing is machine-readable rather than prose that needs parsing.
+All return strict JSON (`response_mime_type="application/json"`), parsed
+server-side, so downstream routing is machine-readable.
+
+### The agents are not trusted
+
+This is the part that matters most. Every agent above is a language model, and a
+language model can be mistaken, overconfident, or manipulated by the very
+document it is reading. The pipeline holds and releases physical cargo, so agent
+output is treated as a **claim**, not a finding.
+
+[`verifier.py`](verifier.py) recomputes what can be computed. Freight against
+lane baselines, value per kilo, mandatory-field completeness, HS code validity
+against a dual-use watchlist held as a code constant, high-risk routing,
+counterparty history. No model is consulted, because
+`shipping_cost / avg_route_cost` is a division.
+
+Those checks produce a **risk floor**, and the governing rule is asymmetric:
+
+> An agent may **raise** risk. It may never **lower** risk below the
+> deterministic floor.
+
+Escalating on model judgement is acceptable; exonerating on model judgement is
+not, because a wrong exoneration releases contraband and a wrong escalation costs
+a reviewer ten minutes. Measured on the deployed service: an agent coerced into
+returning `risk_score: 0` for a dual-use shipment still produced an effective
+risk of 90, `auto_clear_permitted: false`, and a case routed to a human.
+
+Two inputs are deliberately excluded from the document schema in
+[`untrusted.py`](untrusted.py): `avg_route_cost` and `shipper_tx_count`. A
+document that could state its own route average would defeat the pricing check by
+setting it low, and one that could state its own shipper history would defeat the
+counterparty check by claiming a long one. Absent history is treated as
+unverified, and unverified is not clean.
+
+### Authority is published, not earned
+
+An agent here does not acquire the right to act by reasoning well. A human
+publishes a versioned, machine-readable **Delegation Boundary**, and the agent
+operates inside it.
+
+That is what keeps this both autonomous and governable. The human is not
+approving shipments one at a time — that would be a slow human process with extra
+steps. The human approves **policy**, once, and cases execute against it without
+supervision. Only cases that fall outside the published boundary come back to a
+person.
+
+With no active boundary the system is **SUSPENDED** and fails closed: it still
+analyses and proposes, but [`governance.py`](governance.py)'s execution gate
+refuses every protected action. Verified on the deployed service — before any
+boundary was published, even a demonstrably clean shipment could not be
+released.
 
 ---
 
@@ -69,6 +135,49 @@ downstream routing is machine-readable rather than prose that needs parsing.
 
 See `docs/architecture.png` for the diagram submitted to Devpost.
 
+### The autonomous workflow
+
+```
+  Pub/Sub shipment-events ---+
+  Scripted simulator      ---+--> POST /api/v1/events/shipment
+                             |            |
+                             |            v
+                             |    Firestore cases (state INGESTED)
+                             |
+     orchestrator.py: asyncio worker loop, runs with no request in flight,
+     claims a case under a lease, performs exactly one step, persists, repeats
+                             |
+       INGESTED --> fraud_detection agent --> risk_score
+          |
+          +-- risk < 40 --------------------> AUTO_CLEARED
+          |                                     release_shipment()
+          |
+          +-- risk >= 40 --> compliance agent
+                    |
+                    +-- cleared, risk < 70 --> HELD_FOR_REVIEW
+                    |                            assign_analyst()
+                    |
+                    +-- BLOCKED / REVIEW_REQUIRED, or risk >= 70
+                              |
+                              v
+                     investigation agent (thinking_budget 8000)
+                              |
+                              v
+                           ESCALATED
+                             hold_shipment()
+                             draft_sar()
+                             notify_webhook()
+                             assign_analyst()
+
+       Any step failing 3 times, with 5s/10s/20s backoff --> DEAD_LETTER
+
+       Terminal decisions are published to Pub/Sub case-decisions for
+       downstream ERP / WMS / billing, and every action lands in audit_log.
+```
+
+Thresholds are environment variables (`FRAUD_CLEAR_BELOW`, `INVESTIGATE_AT`), so
+the routing policy is configuration rather than something buried in code.
+
 ### Why these choices
 
 - **`location="global"`** — Gemini 3.5 Flash is served from the global endpoint;
@@ -78,9 +187,27 @@ See `docs/architecture.png` for the diagram submitted to Devpost.
 - **Async SDK calls** (`client.aio.models.generate_content`) with gunicorn
   `--threads 8` — a single instance handles concurrent analyses while each waits
   on model latency.
-- **Scale to zero** — no `--min-instances`, so an idle demo costs nothing.
-- **Stateless service** — all state lives in the request. No database is
-  provisioned, which keeps the failure surface and the bill small.
+- **`--no-cpu-throttling --min-instances=1`** — Cloud Run normally freezes CPU
+  between requests, which would suspend the background worker the moment a
+  request finished. This service deliberately gives up scale-to-zero to buy
+  genuine background execution: an unattended workflow that only runs while
+  someone is watching is not unattended. `POST /api/v1/orchestrator/tick` exists
+  as a Cloud Scheduler-driven fallback for deployments that keep throttling on.
+- **Claims are leases, not locks** — a case claimed by an instance that then
+  crashes or is replaced mid-rollout becomes claimable again after
+  `CLAIM_LEASE_SECONDS`. An earlier build used permanent claims and stranded
+  every in-flight case on each deploy.
+- **Firestore with an in-memory fallback** — `STORE_BACKEND=memory` runs the
+  whole pipeline with no database, so the demo cannot be blocked by
+  provisioning. A Firestore failure at boot degrades to memory and is reported
+  on `/health` rather than crashing the container.
+- **Readiness filtering happens in Python, not in the query** — expressing
+  "unclaimed or lease expired, in one of these states, oldest first" as a
+  Firestore query needs a hand-built composite index. Keeping it in code means
+  the service runs against a bare Firestore database with no setup step.
+- **State is persisted before the next step starts** — so a case survives an
+  instance restart and resumes where it stopped, rather than restarting the
+  workflow or losing the agent output already paid for.
 
 ---
 
@@ -90,30 +217,57 @@ See `docs/architecture.png` for the diagram submitted to Devpost.
 |---|---|
 | Model | **Gemini 3.5 Flash** via **Vertex AI** |
 | Agent framework | **Google GenAI SDK** (`google-genai`) |
-| Google Cloud service | **Cloud Run** (source deploy → Cloud Build → Artifact Registry) |
+| Compute | **Cloud Run** (source deploy → Cloud Build → Artifact Registry) |
+| State | **Firestore** (Native mode, `asia-southeast1`) — cases, events, audit log |
+| Messaging | **Pub/Sub** — `shipment-events` in, `case-decisions` out |
 | Web | Flask + gunicorn, flask-cors |
 | Frontend | Vanilla HTML/CSS/JS, no build step |
 | Runtime | Python 3.11-slim container |
 
 Requirement check against the hackathon rules:
 
-- ✅ Gemini 3.5 or newer, via Vertex AI → `gemini-3.5-flash`
-- ✅ At least one Google agent framework → Google GenAI SDK
-- ✅ At least one Google Cloud infrastructure service → Cloud Run
+- Gemini 3.5 or newer, via Vertex AI -> `gemini-3.5-flash`
+- At least one Google agent framework -> Google GenAI SDK
+- Google Cloud infrastructure -> Cloud Run (compute), Firestore (case state and
+  audit trail), Pub/Sub (event ingestion and decision fan-out)
+- Works asynchronously in the background -> a worker loop inside the container
+  drives cases with no request in flight
+- Multi-step workflow -> three agents chained with conditional branching
+- Takes meaningful action -> shipments are held or released, analysts assigned,
+  SAR drafts produced, decisions published
 
-> `requirements.txt` also pins `google-cloud-firestore`, `google-cloud-pubsub`,
-> `google-cloud-bigquery` and `google-cloud-storage`. These are **not used by
-> the current code path** — they are held for the event-driven ingestion work
-> described under *Roadmap*. Nothing in this repo reads or writes them.
+> Firestore and Pub/Sub are used on the live path, not merely pinned.
+> `google-cloud-bigquery` and `google-cloud-storage` remain unused; they are
+> pinned for the historical-baseline work described under *Roadmap*.
 
 ---
 
 ## API
 
+### Autonomous orchestration
+
+These are the Taskmaster endpoints. None of them wait for an agent: ingestion
+returns as soon as the case is durably recorded, and the background worker
+carries the workflow to completion on its own.
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/v1/events/shipment` | POST | Shipment-created event sink. Accepts a bare shipment or a Pub/Sub push envelope. Idempotent per `shipment_id`. |
+| `/api/v1/simulate` | POST | Inject the scripted three-shipment demo batch |
+| `/api/v1/orchestrator/state` | GET | Full dashboard projection: cases, events, audit, counters |
+| `/api/v1/orchestrator/case/<case_id>` | GET | One case with every agent hop, latency and action receipt |
+| `/api/v1/orchestrator/tick` | POST | Advance the pipeline one step. Cloud Scheduler fallback; the background loop normally does this. |
+| `/api/v1/orchestrator/reset` | POST | Clear all cases, events and audit records |
+
+### Direct agent access
+
+Useful for inspecting a single agent in isolation, and what the Single Agent
+Console in the dashboard calls.
+
 | Endpoint | Method | Description |
 |---|---|---|
 | `/` | GET | Web dashboard (HTML) |
-| `/health` | GET | Health check JSON |
+| `/health` | GET | Health check, store backend, worker status |
 | `/agents` | GET | Agent metadata & capabilities |
 | `/demo` | GET | Runs the fraud agent on a built-in sample shipment |
 | `/api/v1/fraud/analyze` | POST | Analyse one shipment |
@@ -211,8 +365,9 @@ gcloud services enable \
 ```
 
 Grant the default compute service account the roles it needs. **This step is
-required** — source deploys fail without the first three, and every model call
-returns `403 PERMISSION_DENIED` without `aiplatform.user`:
+required** — source deploys fail without the build/storage roles, every model
+call returns `403 PERMISSION_DENIED` without `aiplatform.user`, and the
+orchestrator cannot persist a case without `datastore.user`:
 
 ```bash
 PROJECT_ID=YOUR_PROJECT_ID
@@ -221,6 +376,8 @@ SA="$PROJECT_NUMBER-compute@developer.gserviceaccount.com"
 
 for ROLE in \
   roles/aiplatform.user \
+  roles/datastore.user \
+  roles/pubsub.publisher \
   roles/storage.objectAdmin \
   roles/artifactregistry.writer \
   roles/logging.logWriter
@@ -230,6 +387,21 @@ do
 done
 ```
 
+IAM changes take up to a minute to propagate. A `403 Missing or insufficient
+permissions` from Firestore immediately after granting `datastore.user` usually
+means you were faster than IAM, not that the grant failed.
+
+Provision the state store and the topics:
+
+```bash
+gcloud firestore databases create --location=asia-southeast1
+gcloud pubsub topics create shipment-events
+gcloud pubsub topics create case-decisions
+```
+
+No Firestore indexes need to be created; the service is written to run against a
+bare database. To skip Firestore entirely, deploy with `STORE_BACKEND=memory`.
+
 Deploy:
 
 ```bash
@@ -237,19 +409,29 @@ gcloud run deploy vf-fraud-detection \
   --source . \
   --region asia-southeast1 \
   --allow-unauthenticated \
-  --memory 2Gi --cpu 2 --timeout 300 \
-  --set-env-vars "PROJECT_ID=$PROJECT_ID,LOCATION=global"
+  --memory 1Gi --cpu 1 --timeout 300 \
+  --min-instances 1 --max-instances 3 \
+  --no-cpu-throttling \
+  --set-env-vars "PROJECT_ID=$PROJECT_ID,LOCATION=global,STORE_BACKEND=firestore,DECISIONS_TOPIC=case-decisions,CLAIM_LEASE_SECONDS=120"
 ```
 
-Verify:
+`--no-cpu-throttling` and `--min-instances 1` are not optional for the autonomous
+behaviour. Without them Cloud Run suspends the container between requests and the
+background worker stops advancing cases as soon as the browser goes idle.
+
+Verify — `/health` reports which store backend is live and whether the worker
+loop is running, and `ticks` should climb on its own between two calls:
 
 ```bash
 BASE=$(gcloud run services describe vf-fraud-detection \
   --region asia-southeast1 --format='value(status.url)')
 
-curl -s $BASE/health
+curl -s $BASE/health          # expect worker.running=true, ticks increasing
 curl -s $BASE/agents
-curl -s $BASE/demo
+
+# Run the autonomous pipeline end to end
+curl -s -X POST $BASE/api/v1/simulate
+curl -s $BASE/api/v1/orchestrator/state   # poll; cases advance with no further input
 ```
 
 Open `$BASE` in a browser for the dashboard.
@@ -266,13 +448,39 @@ gcloud run services delete vf-fraud-detection --region asia-southeast1
 
 | Variable | Description | Default |
 |---|---|---|
-| `PROJECT_ID` | GCP project used for Vertex AI | `project-93ded24f-21c3-4f1b-a7d` |
+| `PROJECT_ID` | GCP project used for Vertex AI, Firestore, Pub/Sub | `project-93ded24f-21c3-4f1b-a7d` |
 | `LOCATION` | Vertex AI location — must be `global` for Gemini 3.5 Flash | `global` |
+| `WORKER_MODE` | `ondemand` (advance inside requests, costs nothing idle) or `poll` (always-on background loop) | `ondemand` |
+| `STORE_BACKEND` | `firestore` or `memory` | `firestore` |
+| `CLAIM_LEASE_SECONDS` | How long a claimed case stays claimed before another worker may take it | `180` |
+| `FRAUD_CLEAR_BELOW` | Risk below which auto-clear is considered | `40` |
+| `INVESTIGATE_AT` | Risk at or above which investigation always opens | `70` |
+| `DOCUMENT_BUCKET` | Cloud Storage bucket for document archive and stage ingestion | unset |
+| `MODEL_ARMOR_TEMPLATE` | Model Armor template id; unset disables the gate | unset |
+| `MODEL_ARMOR_LOCATION` | Model Armor region | `asia-southeast1` |
+| `MODEL_ARMOR_WINDOW_CHARS` | Screening window size — see the findings section for why windowing is required | `400` |
+| `EXECUTOR_URL` | Executor service URL; unset means no identity split | unset |
+| `DECISIONS_TOPIC` | Pub/Sub topic for published decisions | `case-decisions` |
+| `NOTIFY_WEBHOOK_URL` | Outbound alert webhook; unset records the payload without sending | unset |
+| `MAX_BULK_COUNT` | Cap on the volume-test endpoint | `10` |
 | `PORT` | Port gunicorn binds to (set by Cloud Run) | `8080` |
 
 The model ID is pinned in code (`MODEL_ID = "gemini-3.5-flash"`) in each agent
 module rather than read from the environment, so a misconfigured deploy cannot
 silently downgrade to a model the hackathon rules disallow.
+
+### A note on cost
+
+`WORKER_MODE=poll` requires `--no-cpu-throttling --min-instances=1`, which bills
+around the clock — roughly 0.095 USD/hour in `asia-southeast1` whether or not any
+shipment exists. That was the original design and it was the wrong default: it is
+the polling equivalent of paying continuously to ask whether anything happened.
+
+`ondemand` is the default for that reason. Cases advance inside request
+handlers — the Pub/Sub push, the document upload, and the dashboard's own state
+poll — so the pipeline runs when there is work and the service scales to zero
+when there is not. `POST /api/v1/orchestrator/drain` is the explicit lever for
+clearing a backlog from a script or Cloud Scheduler.
 
 ---
 
@@ -303,23 +511,23 @@ multi-agent hand-off practical.** Each agent's output is consumed as data, not
 re-parsed prose, so adding a fourth agent is a routing change rather than a
 parsing project.
 
-**Migration insight:** the Snowflake Cortex version expressed fraud rules as SQL
-predicates over historical aggregates. Moving to Gemini let us delete most of
-that and describe the *intent* instead — but it also means the output is no
-longer deterministic, so `temperature=0.1` and an explicit `confidence` field in
-the schema are doing real work.
+**Design insight:** this started as SQL predicates over historical aggregates.
+Moving to Gemini let us delete most of that and describe the *intent* instead —
+but it also means the output is no longer deterministic, so `temperature=0.1`
+and an explicit `confidence` field in the schema are doing real work.
 
 ---
 
 ## Roadmap
 
-The current build is request-driven: the UI or an API client triggers an
-analysis. The natural next step for the Taskmaster track is fully event-driven
-ingestion — Pub/Sub topic on shipment-created events, a Cloud Run push
-subscription that routes to the right agent based on the fraud agent's
-`risk_level`, Firestore for case state across the investigation lifecycle, and
-BigQuery for the historical route-cost baselines the agents currently receive as
-request fields. The client libraries are already pinned for this.
+The orchestration layer is live; what is still stubbed is the data it reasons
+over. The agents currently receive route-cost baselines as request fields, and
+sanctions screening is the model's own knowledge rather than a list lookup. The
+next steps are BigQuery for real historical baselines, a genuine OFAC/UN/EU list
+integration behind the compliance agent, and replacing the scripted simulator
+with a production Pub/Sub subscription from the shipment system. `notify_webhook`
+is wired but inert until `NOTIFY_WEBHOOK_URL` is set to a Slack, Teams or Google
+Chat endpoint.
 
 ---
 
@@ -327,9 +535,14 @@ request fields. The client libraries are already pinned for this.
 
 ```
 .
-├── main.py                       Flask app, routes, async bridge
+├── main.py                       Flask app, routes, async bridge, worker boot
+├── orchestrator.py               Autonomous state machine + background worker
+├── store.py                      Case/event/audit state (Firestore, memory fallback)
+├── tools.py                      Actions taken on the operator's behalf
+├── simulator.py                  Scripted shipment events for the demo
 ├── agents/
 │   ├── __init__.py               Public agent API
+│   ├── _common.py                Shared JSON parsing, timing, response envelope
 │   ├── fraud_detection_agent.py  Fraud scoring
 │   ├── compliance_agent.py       Sanctions / trade / AML
 │   └── investigation_agent.py    Deep-dive, extended thinking
