@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>VF Logistics — Architecture Diagram</title>
+<style>
+  body {
+    margin: 0; padding: 28px;
+    background: #0b1020;
+    font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  }
+  #shot { width: 1280px; background: #0b1020; padding: 34px 40px 40px; }
+  h1 { color: #e8edf9; font-size: 26px; margin: 0 0 4px; letter-spacing: -0.5px; }
+  .sub { color: #96a2c0; font-size: 13px; margin-bottom: 26px; }
+  .sub b { color: #e8edf9; }
+  svg { display: block; }
+  .hint { color: #6f7d9c; font-size: 12px; margin-top: 20px; }
+</style>
+</head>
+<body>
+<div id="shot">
+  <h1>VF Logistics — Autonomous Fraud Detection Agents</h1>
+  <div class="sub">
+    All Things Agentic 2026 · Track: <b>The Taskmaster</b> ·
+    <b>Gemini 3.5 Flash</b> on Vertex AI · <b>Cloud Run</b> asia-southeast1
+  </div>
+
+  <svg width="1200" height="660" viewBox="0 0 1200 660" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="gRun" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#1b2750"/><stop offset="1" stop-color="#141d3a"/>
+      </linearGradient>
+      <linearGradient id="gAgent" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#1d2b52"/><stop offset="1" stop-color="#172244"/>
+      </linearGradient>
+      <linearGradient id="gGem" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#4285f4"/><stop offset="0.55" stop-color="#34a853"/>
+        <stop offset="1" stop-color="#fbbc05"/>
+      </linearGradient>
+      <marker id="arw" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+        <path d="M0,1 L10,5.5 L0,10 z" fill="#5b6b93"/>
+      </marker>
+      <marker id="arwB" markerWidth="11" markerHeight="11" refX="9" refY="5.5" orient="auto">
+        <path d="M0,1 L10,5.5 L0,10 z" fill="#4285f4"/>
+      </marker>
+    </defs>
+
+    <!-- ===== Client ===== -->
+    <rect x="24" y="24" width="250" height="112" rx="13"
+          fill="#141d3a" stroke="#2c3a5e" stroke-width="1.5"/>
+    <text x="46" y="52" fill="#96a2c0" font-size="11" letter-spacing="1.4">CLIENT</text>
+    <text x="46" y="78" fill="#e8edf9" font-size="15" font-weight="600">Web Dashboard</text>
+    <text x="46" y="99" fill="#8f9dbd" font-size="12">static/index.html</text>
+    <text x="46" y="118" fill="#8f9dbd" font-size="12">vanilla JS · fetch()</text>
+
+    <!-- client -> cloud run -->
+    <path d="M274,80 L372,80" stroke="#5b6b93" stroke-width="2" fill="none" marker-end="url(#arw)"/>
+    <text x="286" y="72" fill="#7b89ab" font-size="11">HTTPS / JSON</text>
+
+    <!-- ===== Cloud Run boundary ===== -->
+    <rect x="372" y="24" width="470" height="480" rx="15"
+          fill="url(#gRun)" stroke="#3a4d7d" stroke-width="1.8"/>
+    <text x="396" y="52" fill="#8fb4ff" font-size="11" letter-spacing="1.4">GOOGLE CLOUD RUN · asia-southeast1</text>
+    <text x="396" y="74" fill="#e8edf9" font-size="15" font-weight="700">vf-fraud-detection</text>
+    <text x="396" y="94" fill="#8f9dbd" font-size="11.5">2 vCPU · 2 GiB · scale-to-zero · unauthenticated</text>
+
+    <!-- gunicorn / flask -->
+    <rect x="396" y="112" width="422" height="104" rx="11"
+          fill="#101a36" stroke="#2c3a5e" stroke-width="1.3"/>
+    <text x="416" y="136" fill="#e8edf9" font-size="13.5" font-weight="600">gunicorn → Flask (main.py)</text>
+    <text x="416" y="157" fill="#8f9dbd" font-size="11.5">1 worker · 8 threads · asyncio.run() bridge</text>
+
+    <rect x="416" y="168" width="86" height="26" rx="6" fill="#1b2750" stroke="#33436d"/>
+    <text x="459" y="185" fill="#c3ccdf" font-size="11" text-anchor="middle">GET /</text>
+    <rect x="510" y="168" width="94" height="26" rx="6" fill="#1b2750" stroke="#33436d"/>
+    <text x="557" y="185" fill="#c3ccdf" font-size="11" text-anchor="middle">/health</text>
+    <rect x="612" y="168" width="94" height="26" rx="6" fill="#1b2750" stroke="#33436d"/>
+    <text x="659" y="185" fill="#c3ccdf" font-size="11" text-anchor="middle">/agents</text>
+    <rect x="714" y="168" width="86" height="26" rx="6" fill="#1b2750" stroke="#33436d"/>
+    <text x="757" y="185" fill="#c3ccdf" font-size="11" text-anchor="middle">/demo</text>
+
+    <!-- flask -> agents -->
+    <path d="M607,216 L607,246" stroke="#5b6b93" stroke-width="2" fill="none" marker-end="url(#arw)"/>
+    <text x="618" y="238" fill="#7b89ab" font-size="11">/api/v1/**</text>
+
+    <!-- agent layer -->
+    <rect x="396" y="250" width="422" height="232" rx="11"
+          fill="#0f1a34" stroke="#2c3a5e" stroke-width="1.3"/>
+    <text x="416" y="274" fill="#8fb4ff" font-size="11" letter-spacing="1.2">AGENT LAYER · google-genai SDK (async)</text>
+
+    <!-- agent 1 -->
+    <rect x="414" y="288" width="386" height="56" rx="9"
+          fill="url(#gAgent)" stroke="#3f5punk" stroke-width="0"/>
+    <rect x="414" y="288" width="386" height="56" rx="9"
+          fill="url(#gAgent)" stroke="#41558a" stroke-width="1.2"/>
+    <rect x="414" y="288" width="4.5" height="56" rx="2" fill="#ea4335"/>
+    <text x="430" y="309" fill="#e8edf9" font-size="13" font-weight="600">Fraud Detection Agent</text>
+    <text x="430" y="329" fill="#93a1c1" font-size="11">7 fraud patterns · risk_score 0–100 · temperature 0.1</text>
+
+    <!-- agent 2 -->
+    <rect x="414" y="352" width="386" height="56" rx="9"
+          fill="url(#gAgent)" stroke="#41558a" stroke-width="1.2"/>
+    <rect x="414" y="352" width="4.5" height="56" rx="2" fill="#fbbc05"/>
+    <text x="430" y="373" fill="#e8edf9" font-size="13" font-weight="600">Compliance Screening Agent</text>
+    <text x="430" y="393" fill="#93a1c1" font-size="11">OFAC / UN / EU · trade &amp; AML · entity screening</text>
+
+    <!-- agent 3 -->
+    <rect x="414" y="416" width="386" height="56" rx="9"
+          fill="url(#gAgent)" stroke="#41558a" stroke-width="1.2"/>
+    <rect x="414" y="416" width="4.5" height="56" rx="2" fill="#34a853"/>
+    <text x="430" y="437" fill="#e8edf9" font-size="13" font-weight="600">AI Investigation Agent</text>
+    <text x="430" y="457" fill="#93a1c1" font-size="11">multi-step reasoning · thinking_budget = 8000</text>
+
+    <!-- ===== Vertex AI / Gemini ===== -->
+    <path d="M842,380 L946,380" stroke="#4285f4" stroke-width="2.4" fill="none" marker-end="url(#arwB)"/>
+    <text x="852" y="371" fill="#8fb4ff" font-size="11">vertexai=True</text>
+
+    <rect x="946" y="288" width="230" height="184" rx="14"
+          fill="#101a36" stroke="#4285f4" stroke-width="1.8"/>
+    <text x="968" y="316" fill="#8fb4ff" font-size="11" letter-spacing="1.3">VERTEX AI</text>
+
+    <rect x="968" y="330" width="186" height="60" rx="10" fill="url(#gGem)"/>
+    <text x="1061" y="356" fill="#0b1020" font-size="15" font-weight="800" text-anchor="middle">Gemini 3.5 Flash</text>
+    <text x="1061" y="376" fill="#0b1020" font-size="11" font-weight="600" text-anchor="middle">gemini-3.5-flash</text>
+
+    <text x="968" y="415" fill="#93a1c1" font-size="11.5">location: global</text>
+    <text x="968" y="435" fill="#93a1c1" font-size="11.5">response_mime_type:</text>
+    <text x="968" y="452" fill="#c3ccdf" font-size="11.5">application/json</text>
+
+    <!-- ===== Build pipeline ===== -->
+    <rect x="24" y="176" width="250" height="150" rx="13"
+          fill="#141d3a" stroke="#2c3a5e" stroke-width="1.5"/>
+    <text x="46" y="204" fill="#96a2c0" font-size="11" letter-spacing="1.4">DEPLOY PIPELINE</text>
+    <text x="46" y="230" fill="#c3ccdf" font-size="12">gcloud run deploy --source</text>
+    <text x="46" y="254" fill="#8f9dbd" font-size="12">↓ Cloud Build</text>
+    <text x="46" y="276" fill="#8f9dbd" font-size="12">↓ Artifact Registry</text>
+    <text x="46" y="298" fill="#8f9dbd" font-size="12">↓ Cloud Run revision</text>
+    <text x="46" y="318" fill="#6f7d9c" font-size="11">python:3.11-slim</text>
+
+    <path d="M274,250 L340,250 L340,150 L372,150"
+          stroke="#5b6b93" stroke-width="1.8" fill="none"
+          stroke-dasharray="5 4" marker-end="url(#arw)"/>
+
+    <!-- ===== IAM ===== -->
+    <rect x="24" y="342" width="250" height="162" rx="13"
+          fill="#141d3a" stroke="#2c3a5e" stroke-width="1.5"/>
+    <text x="46" y="370" fill="#96a2c0" font-size="11" letter-spacing="1.4">IAM · compute SA</text>
+    <text x="46" y="396" fill="#c3ccdf" font-size="11.5">roles/aiplatform.user</text>
+    <text x="46" y="418" fill="#c3ccdf" font-size="11.5">roles/storage.objectAdmin</text>
+    <text x="46" y="440" fill="#c3ccdf" font-size="11.5">roles/artifactregistry.writer</text>
+    <text x="46" y="462" fill="#c3ccdf" font-size="11.5">roles/logging.logWriter</text>
+    <text x="46" y="488" fill="#6f7d9c" font-size="11">no service-account keys — org policy</text>
+
+    <!-- ===== Roadmap (not built) ===== -->
+    <rect x="24" y="536" width="1152" height="100" rx="13"
+          fill="#0e1730" stroke="#2c3a5e" stroke-width="1.5" stroke-dasharray="7 5"/>
+    <text x="48" y="564" fill="#7b89ab" font-size="11" letter-spacing="1.4">ROADMAP — NOT IN CURRENT BUILD</text>
+
+    <rect x="48" y="578" width="188" height="40" rx="8" fill="#131f3d" stroke="#2c3a5e" stroke-dasharray="4 3"/>
+    <text x="142" y="603" fill="#8f9dbd" font-size="12" text-anchor="middle">Pub/Sub events</text>
+    <rect x="252" y="578" width="188" height="40" rx="8" fill="#131f3d" stroke="#2c3a5e" stroke-dasharray="4 3"/>
+    <text x="346" y="603" fill="#8f9dbd" font-size="12" text-anchor="middle">Firestore case state</text>
+    <rect x="456" y="578" width="188" height="40" rx="8" fill="#131f3d" stroke="#2c3a5e" stroke-dasharray="4 3"/>
+    <text x="550" y="603" fill="#8f9dbd" font-size="12" text-anchor="middle">BigQuery baselines</text>
+    <rect x="660" y="578" width="230" height="40" rx="8" fill="#131f3d" stroke="#2c3a5e" stroke-dasharray="4 3"/>
+    <text x="775" y="603" fill="#8f9dbd" font-size="12" text-anchor="middle">risk_level → autonomous routing</text>
+
+    <text x="912" y="603" fill="#6f7d9c" font-size="11">client libs pinned, no code path yet</text>
+  </svg>
+
+  <div class="hint">
+    Solid borders = deployed and exercised in the demo. Dashed = roadmap, not implemented.
+  </div>
+</div>
+</body>
+</html>

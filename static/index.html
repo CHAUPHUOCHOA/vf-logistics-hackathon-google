@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VF Logistics — AI Fraud Detection</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --bg-2: #121a33;
+    --card: #161f3d;
+    --line: #24304f;
+    --txt: #e8edf9;
+    --muted: #96a2c0;
+    --blue: #4285f4;
+    --green: #34a853;
+    --yellow: #fbbc05;
+    --red: #ea4335;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+    background: radial-gradient(1200px 600px at 20% -10%, #1b2750 0%, var(--bg) 55%);
+    color: var(--txt);
+    min-height: 100vh;
+  }
+  header {
+    padding: 28px 24px 12px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 44px; height: 44px; border-radius: 12px;
+    background: linear-gradient(135deg, var(--blue), var(--green) 60%, var(--yellow));
+    display: grid; place-items: center;
+    font-weight: 800; font-size: 18px; color: #0b1020;
+  }
+  h1 { margin: 0; font-size: 24px; letter-spacing: -0.4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .badge {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px;
+    background: #1d2846; border: 1px solid var(--line); color: var(--muted);
+  }
+  .badge b { color: var(--txt); font-weight: 600; }
+  main {
+    max-width: 1200px; margin: 0 auto; padding: 16px 24px 60px;
+    display: grid; grid-template-columns: 420px 1fr; gap: 22px;
+  }
+  @media (max-width: 940px) { main { grid-template-columns: 1fr; } }
+  .card {
+    background: linear-gradient(180deg, var(--card), var(--bg-2));
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+  }
+  .card h2 { margin: 0 0 4px; font-size: 15px; text-transform: uppercase; letter-spacing: 1px; }
+  .card .hint { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab {
+    padding: 8px 14px; font-size: 13px; border-radius: 9px; cursor: pointer;
+    background: #1a2340; border: 1px solid var(--line); color: var(--muted);
+  }
+  .tab.on { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; }
+  input, select, textarea {
+    width: 100%; padding: 10px 12px; font-size: 14px; font-family: inherit;
+    background: #0f1730; border: 1px solid var(--line); border-radius: 9px; color: var(--txt);
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--blue); }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button {
+    width: 100%; margin-top: 20px; padding: 13px; font-size: 14px; font-weight: 600;
+    font-family: inherit; cursor: pointer; border: none; border-radius: 10px;
+    background: linear-gradient(135deg, var(--blue), #1b6ef3); color: #fff;
+  }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .ghost { background: #1a2340; border: 1px solid var(--line); color: var(--muted); margin-top: 10px; }
+  .empty { display: grid; place-items: center; min-height: 300px; color: var(--muted); text-align: center; }
+  .empty .big { font-size: 40px; margin-bottom: 10px; opacity: .5; }
+  .spinner {
+    width: 34px; height: 34px; border: 3px solid var(--line);
+    border-top-color: var(--blue); border-radius: 50%;
+    animation: spin .8s linear infinite; margin: 0 auto 14px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .score-wrap { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+  .gauge { position: relative; width: 132px; height: 132px; flex-shrink: 0; }
+  .gauge svg { transform: rotate(-90deg); }
+  .gauge .val {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font-size: 30px; font-weight: 800;
+  }
+  .lvl { font-size: 22px; font-weight: 800; letter-spacing: -0.4px; }
+  .meta { color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.7; }
+  .flag {
+    border: 1px solid var(--line); border-left-width: 4px; border-radius: 10px;
+    padding: 13px 15px; margin-top: 11px; background: #0f1730;
+  }
+  .flag .top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .flag .ty { font-weight: 700; font-size: 14px; }
+  .sev { font-size: 10px; font-weight: 800; padding: 3px 9px; border-radius: 999px; letter-spacing: .6px; }
+  .flag p { margin: 8px 0 0; font-size: 13px; color: #c3ccdf; line-height: 1.65; }
+  .flag pre {
+    margin: 9px 0 0; font-size: 11px; color: var(--muted);
+    background: #0b1226; padding: 9px 11px; border-radius: 7px;
+    overflow-x: auto; white-space: pre-wrap;
+  }
+  ul.recs { margin: 10px 0 0; padding-left: 20px; }
+  ul.recs li { font-size: 13px; color: #c3ccdf; line-height: 1.7; margin-bottom: 7px; }
+  .sec { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .sec h3 { margin: 0 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
+  details { margin-top: 22px; }
+  summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  details pre {
+    margin-top: 10px; font-size: 11px; background: #0b1226; color: #9fb0d0;
+    padding: 14px; border-radius: 9px; overflow-x: auto; max-height: 360px;
+  }
+  .err { border-left: 4px solid var(--red); background: #2a1418; padding: 15px; border-radius: 10px; font-size: 13px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 24px 34px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="logo">VF</div>
+    <div>
+      <h1>VF Logistics — AI Fraud Detection</h1>
+      <div class="sub">Autonomous multi-agent workflow · Gemini 3.5 Flash on Vertex AI</div>
+    </div>
+  </div>
+  <div class="badges">
+    <span class="badge">Hackathon: <b>All Things Agentic 2026</b></span>
+    <span class="badge">Track: <b>The Taskmaster</b></span>
+    <span class="badge">Model: <b>gemini-3.5-flash</b></span>
+    <span class="badge">Runtime: <b>Cloud Run · asia-southeast1</b></span>
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>Shipment Input</h2>
+    <div class="hint">Chọn agent và nhập dữ liệu lô hàng để phân tích.</div>
+
+    <div class="tabs">
+      <div class="tab on" data-agent="fraud">Fraud Detection</div>
+      <div class="tab" data-agent="compliance">Compliance</div>
+      <div class="tab" data-agent="investigation">Investigation</div>
+    </div>
+
+    <label>Shipment ID</label>
+    <input id="shipment_id" value="VF-2026-0001">
+
+    <div class="row">
+      <div>
+        <label>Origin</label>
+        <input id="origin" value="Ho Chi Minh City">
+      </div>
+      <div>
+        <label>Destination</label>
+        <input id="destination" value="Hanoi">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Weight (kg)</label>
+        <input id="weight_kg" type="number" value="150">
+      </div>
+      <div>
+        <label>Declared Value (VND)</label>
+        <input id="declared_value" type="number" value="50000000">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Shipping Cost (VND)</label>
+        <input id="shipping_cost" type="number" value="1200000">
+      </div>
+      <div>
+        <label>Avg Route Cost (VND)</label>
+        <input id="avg_route_cost" type="number" value="3000000">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Shipper</label>
+        <input id="shipper_name" value="Thanh Phat Trading Co">
+      </div>
+      <div>
+        <label>Receiver</label>
+        <input id="receiver_name" value="Minh Long Import Ltd">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Shipper TX Count</label>
+        <input id="shipper_tx_count" type="number" value="2">
+      </div>
+      <div>
+        <label>Status</label>
+        <select id="status">
+          <option>pending</option>
+          <option>in_transit</option>
+          <option>delivered</option>
+          <option>flagged</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Route Details</label>
+    <input id="route_details" value="HCMC → Da Nang → Hanoi">
+
+    <button id="run">Phân tích với AI</button>
+    <button id="demo" class="ghost">Chạy Demo mẫu</button>
+  </section>
+
+  <section class="card" id="out">
+    <div class="empty">
+      <div>
+        <div class="big">🛡️</div>
+        <div>Kết quả phân tích sẽ hiện ở đây.</div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>VF Logistics Fraud Detection · Migrated from Snowflake Cortex to Google Cloud</footer>
+
+<script>
+const out = document.getElementById('out');
+let agent = 'fraud';
+
+const ENDPOINTS = {
+  fraud: '/api/v1/fraud/analyze',
+  compliance: '/api/v1/compliance/screen',
+  investigation: '/api/v1/investigation/case'
+};
+
+const SEV_COLOR = {
+  CRITICAL: 'var(--red)',
+  HIGH: '#ff7043',
+  MEDIUM: 'var(--yellow)',
+  LOW: 'var(--green)'
+};
+
+document.querySelectorAll('.tab').forEach(t => {
+  t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.remove('on'));
+    t.classList.add('on');
+    agent = t.dataset.agent;
+  };
+});
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+function num(id) { return Number(document.getElementById(id).value) || 0; }
+function str(id) { return document.getElementById(id).value; }
+
+function payload() {
+  return {
+    shipment_id: str('shipment_id'),
+    origin: str('origin'),
+    destination: str('destination'),
+    weight_kg: num('weight_kg'),
+    declared_value: num('declared_value'),
+    shipping_cost: num('shipping_cost'),
+    avg_route_cost: num('avg_route_cost'),
+    shipper_name: str('shipper_name'),
+    receiver_name: str('receiver_name'),
+    shipper_tx_count: num('shipper_tx_count'),
+    status: str('status'),
+    route_details: str('route_details'),
+    created_at: new Date().toISOString()
+  };
+}
+
+function loading(msg) {
+  out.innerHTML = `<div class="empty"><div>
+    <div class="spinner"></div>
+    <div>${esc(msg)}</div>
+    <div style="font-size:12px;margin-top:6px;opacity:.7">Gemini 3.5 Flash đang suy luận…</div>
+  </div></div>`;
+}
+
+function fail(msg) {
+  out.innerHTML = `<h2>Lỗi</h2><div class="err">${esc(msg)}</div>`;
+}
+
+// Agent trả về `analysis` là chuỗi JSON (response_mime_type=application/json).
+function parseAnalysis(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'object') return raw;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+
+function gauge(score) {
+  const pct = Math.max(0, Math.min(100, Number(score) || 0));
+  const r = 56, C = 2 * Math.PI * r;
+  const color = pct >= 75 ? 'var(--red)' : pct >= 50 ? '#ff7043' : pct >= 25 ? 'var(--yellow)' : 'var(--green)';
+  return `<div class="gauge">
+    <svg width="132" height="132">
+      <circle cx="66" cy="66" r="${r}" fill="none" stroke="var(--line)" stroke-width="11"></circle>
+      <circle cx="66" cy="66" r="${r}" fill="none" stroke="${color}" stroke-width="11"
+        stroke-linecap="round" stroke-dasharray="${C}"
+        stroke-dashoffset="${C * (1 - pct / 100)}"></circle>
+    </svg>
+    <div class="val" style="color:${color}">${pct}</div>
+  </div>`;
+}
+
+function flagCard(f) {
+  const sev = (f.severity || f.risk_level || 'MEDIUM').toUpperCase();
+  const color = SEV_COLOR[sev] || 'var(--yellow)';
+  const type = f.type || f.category || f.issue || 'Finding';
+  const desc = f.description || f.detail || f.explanation || '';
+  const extra = f.details && typeof f.details === 'object'
+    ? `<pre>${esc(JSON.stringify(f.details, null, 2))}</pre>` : '';
+  return `<div class="flag" style="border-left-color:${color}">
+    <div class="top">
+      <span class="ty">${esc(type)}</span>
+      <span class="sev" style="background:${color};color:#0b1020">${esc(sev)}</span>
+    </div>
+    ${desc ? `<p>${esc(desc)}</p>` : ''}
+    ${extra}
+  </div>`;
+}
+
+function render(res, label) {
+  const a = parseAnalysis(res.analysis);
+  const rawJson = JSON.stringify(res, null, 2);
+
+  if (!a) {
+    out.innerHTML = `<h2>${esc(label)}</h2>
+      <div class="hint">Model: ${esc(res.model || '—')}</div>
+      <pre style="font-size:12px;background:#0b1226;padding:14px;border-radius:9px;overflow-x:auto;white-space:pre-wrap">${esc(
+        typeof res.analysis === 'string' ? res.analysis : rawJson
+      )}</pre>`;
+    return;
+  }
+
+  const score = a.risk_score ?? a.compliance_score ?? a.score ?? 0;
+  const lvl = (a.risk_level || a.compliance_status || a.level || '—').toUpperCase();
+  const lvlColor = SEV_COLOR[lvl] || 'var(--blue)';
+  const conf = a.confidence != null ? Math.round(a.confidence * 100) + '%' : '—';
+
+  const flags = a.flags || a.issues || a.findings || [];
+  const recs = a.recommendations || a.actions || a.next_steps || [];
+
+  out.innerHTML = `
+    <h2>${esc(label)}</h2>
+    <div class="hint">Shipment ${esc(res.shipment_id || str('shipment_id'))}</div>
+
+    <div class="score-wrap">
+      ${gauge(score)}
+      <div>
+        <div class="lvl" style="color:${lvlColor}">${esc(lvl)}</div>
+        <div class="meta">
+          Risk score: <b>${esc(score)}</b> / 100<br>
+          Confidence: <b>${esc(conf)}</b><br>
+          Model: <b>${esc(res.model || 'gemini-3.5-flash')}</b><br>
+          Analyzed: ${esc(res.analyzed_at || new Date().toISOString())}
+        </div>
+      </div>
+    </div>
+
+    ${flags.length ? `<div class="sec">
+      <h3>Phát hiện (${flags.length})</h3>
+      ${flags.map(flagCard).join('')}
+    </div>` : ''}
+
+    ${recs.length ? `<div class="sec">
+      <h3>Khuyến nghị</h3>
+      <ul class="recs">${recs.map(r => `<li>${esc(
+        typeof r === 'string' ? r : (r.action || JSON.stringify(r))
+      )}</li>`).join('')}</ul>
+    </div>` : ''}
+
+    <details>
+      <summary>Xem JSON gốc từ API</summary>
+      <pre>${esc(rawJson)}</pre>
+    </details>`;
+}
+
+async function call(url, body, label) {
+  loading('Đang gọi ' + label + '…');
+  try {
+    const opt = body
+      ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+      : { method: 'GET' };
+    const r = await fetch(url, opt);
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); } catch (e) {
+      throw new Error(`HTTP ${r.status} — phản hồi không phải JSON:\n${text.slice(0, 400)}`);
+    }
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    render(data.analysis && data.sample_shipment ? data.analysis : data, label);
+  } catch (e) {
+    fail(e.message);
+  }
+}
+
+const LABELS = {
+  fraud: 'Fraud Detection Agent',
+  compliance: 'Compliance Screening Agent',
+  investigation: 'AI Investigation Agent'
+};
+
+document.getElementById('run').onclick = () =>
+  call(ENDPOINTS[agent], payload(), LABELS[agent]);
+
+document.getElementById('demo').onclick = () =>
+  call('/demo', null, 'Demo — Fraud Detection Agent');
+</script>
+</body>
+</html>
