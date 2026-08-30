@@ -1055,9 +1055,15 @@ function renderKpis(snap) {
             w.mode === 'poll' ? 'background worker' : 'advances on request',
             snap.in_flight ? 'var(--yellow)' : null) +
     kpiTile('Auto-cleared', c.AUTO_CLEARED || 0, 'released within delegated limits', 'var(--green)') +
+    // Escalated cases are inside this number on purpose: AWAITING_HUMAN in the
+    // orchestrator drives the review queue and the decide() guard too, so the
+    // tile, the queue badge and what a reviewer can act on always agree. Said
+    // explicitly because sitting next to the Escalated tile it reads as double
+    // counting, and a reader who adds the two gets a total above the case count.
     kpiTile('Awaiting human', snap.awaiting_human || 0,
-            'agent could not close these', (snap.awaiting_human ? 'var(--yellow)' : null)) +
-    kpiTile('Escalated', c.ESCALATED || 0, 'held, SAR drafted', 'var(--red)') +
+            `needs a person${c.ESCALATED ? ` — ${c.ESCALATED} of these escalated` : ''}`,
+            (snap.awaiting_human ? 'var(--yellow)' : null)) +
+    kpiTile('Escalated', c.ESCALATED || 0, 'held, SAR drafted — subset of the above', 'var(--red)') +
     kpiTile('Avg agent latency', (snap.avg_latency_ms || 0) + 'ms',
             (snap.agent_calls || 0) + ' Gemini calls');
 
