@@ -23,8 +23,14 @@ injection call returning in 547ms and no further input:
 | Shipment | Fraud risk | Compliance | Outcome | Actions executed |
 |---|---|---|---|---|
 | Clean garment export | 5/100 | not needed | `AUTO_CLEARED` | released for delivery |
-| Underpriced furniture, thin history | 58/100 | cleared | `HELD_FOR_REVIEW` | analyst assigned |
+| Underpriced furniture, thin history | 45–48/100 | cleared | `HELD_FOR_REVIEW` | analyst assigned |
 | Dual-use goods, 11-day-old shell company | 95/100 | review required | `ESCALATED` | held, SAR drafted, compliance notified |
+
+The outcomes are stable — four consecutive runs from a reset board produced the
+same three states. The middle score is given as a range because it is a model
+judgement at `temperature=0.1`, and quoting one spot value as though it were
+deterministic would misrepresent it; what is deterministic is which side of the
+thresholds it falls on.
 
 ---
 
@@ -94,12 +100,34 @@ a reviewer ten minutes. Measured on the deployed service: an agent coerced into
 returning `risk_score: 0` for a dual-use shipment still produced an effective
 risk of 90, `auto_clear_permitted: false`, and a case routed to a human.
 
-Two inputs are deliberately excluded from the document schema in
-[`untrusted.py`](untrusted.py): `avg_route_cost` and `shipper_tx_count`. A
-document that could state its own route average would defeat the pricing check by
-setting it low, and one that could state its own shipper history would defeat the
-counterparty check by claiming a long one. Absent history is treated as
-unverified, and unverified is not clean.
+Three inputs are deliberately excluded from the document schema in
+[`untrusted.py`](untrusted.py): `avg_route_cost`, `shipper_tx_count` and
+`created_at`. A document that could state its own route average would defeat the
+pricing check by setting it low, and one that could state its own shipper history
+would defeat the counterparty check by claiming a long one. Absent history is
+treated as unverified, and unverified is not clean.
+
+That exclusion leaves a gap the design has to close somewhere else. Absent
+history sets a floor of 45, above the auto-clear threshold of 40, so for a while
+*no* uploaded or staged document could clear autonomously — the control was
+written around an enrichment step that did not exist yet.
+[`shipper_registry.py`](shipper_registry.py) is that step: it resolves the
+claimed shipper against our own counterparty book and supplies the trading
+history the document is not allowed to assert about itself. Identity must match
+on tax ID **and** company name together, because the tax ID is itself read off
+the untrusted document — a forged bill of lading carrying a real customer's
+number would otherwise inherit that customer's clean history. A number that
+matches under a different name is reported as `identity_mismatch` and treated as
+worse than unknown.
+
+The withheld fields are also reported to the fraud agent as *not available*
+rather than as a bare `N/A`, with an instruction that their absence says nothing
+about the shipment. Showing an unexplained blank made the agent read our own
+intake rule as evidence against the shipper: it called a missing creation
+timestamp "highly anomalous, could indicate manual record insertion" and scored a
+well-formed bill of lading at 52 — high enough to hold it. The value is still
+never taken from the file. The deterministic floor, not the model, remains the
+thing that penalises genuinely unverified history.
 
 ### Authority is published, not earned
 
@@ -630,13 +658,17 @@ curl -s -F "file=@sample_docs/injected_bol.pdf" $BASE/api/v1/events/document
 
 Gemini 3.5 Flash reads the PDFs directly — there is no OCR stage. Because
 `WORKER_MODE=ondemand`, each call returns the final `state` in the same response.
-Observed outcomes:
+Observed outcomes, each reproduced three times from a reset board:
 
 | File | `model_invoked` | Result |
 |---|---|---|
-| `clean_bol.pdf` | `true` | `ESCALATED` — the pipeline runs end to end and the investigation agent flags trade-based money laundering: the declared value is far below plausible for the cargo. "Clean" here means a clean *scan*, not a clean shipment. |
-| `dirty_bol.pdf` | `true` | `PENDING_HUMAN` — the figures do not reconcile, so it is held for a person rather than guessed at. |
+| `clean_bol.pdf` | `true` | `AUTO_CLEARED` — the shipper's tax ID and company resolve in [`shipper_registry.py`](shipper_registry.py) to 412 prior shipments with no prior flags, compliance clears at 98, and the case releases with no human involved. |
+| `dirty_bol.pdf` | `true` | `ESCALATED` — no usable tax ID, so counterparty lookup returns `unknown` and the unverified-history floor stands; the figures also do not reconcile. Held with a SAR drafted. |
 | `injected_bol.pdf` | **`false`** | `PENDING_HUMAN` — blocked before the model was ever called. |
+
+The first two are the pair worth reading together: they differ in whether the
+claimed shipper is one we can vouch for from our own records, and that single
+difference is what separates an autonomous release from an escalation.
 
 The third case is the one worth reading closely. The document contains text
 instructing the model to set the risk score to zero and skip compliance
@@ -648,6 +680,17 @@ silently discarded. A second, independent pattern-based screen runs regardless o
 whether Model Armor is reachable, so the path fails closed.
 
 To regenerate the PDFs, or to make new ones: `python tools_make_sample_docs.py`.
+
+The counterparty lookup that lets a document clear has its own self-check, since
+it is the module that decides whether a shipment may be released without a human:
+
+```bash
+python tools_check_registry.py   # 11 checks, exits non-zero on failure
+```
+
+It covers the case that matters most — a real tax number presented under the
+wrong company name must be reported as `identity_mismatch` and must not inherit
+that customer's clean history.
 
 ### Zero-setup path
 
@@ -859,6 +902,7 @@ in `04`.
 ├── governance.py                 Delegation Boundary + fail-closed execution gate
 ├── verifier.py                   Deterministic risk floor (no model consulted)
 ├── untrusted.py                  Schema whitelist for document-sourced fields
+├── shipper_registry.py           Counterparty book: verifies a claimed shipper identity
 ├── model_armor.py                Windowed prompt-injection screening
 ├── store.py                      Case/event/audit state (Firestore, memory fallback)
 ├── document_render.py            Renders event-sourced shipments as a bill of lading
@@ -867,6 +911,8 @@ in `04`.
 ├── tools.py                      Actions taken on the operator's behalf
 ├── simulator.py                  Scripted shipment events for the demo
 ├── tools_make_sample_docs.py     Generates the sample BOL/invoice PDFs
+├── tools_seed_demo_board.py      Seeds the board to an exact outcome mix for a demo
+├── tools_check_registry.py       Self-check for the counterparty book
 ├── sample_docs/                  Committed sample PDFs: clean, dirty, injected
 ├── agents/
 │   ├── __init__.py               Public agent API
@@ -877,6 +923,8 @@ in `04`.
 │   └── investigation_agent.py    Deep-dive, extended thinking     — Flash-Lite
 ├── static/
 │   └── index.html                Dashboard (no build step)
+├── infra/
+│   └── model_armor_template.json  Filter config for the Model Armor template
 ├── docs/
 │   ├── architecture.html         Diagram source
 │   ├── architecture.png          Diagram submitted to Devpost

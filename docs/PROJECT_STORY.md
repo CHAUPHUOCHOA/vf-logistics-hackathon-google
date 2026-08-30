@@ -105,6 +105,54 @@ an original would have been worse than showing nothing.
 
 ## Challenges we ran into
 
+**A security control that quietly made autonomy impossible.** We refuse to take a
+shipper's trading history from a bill of lading, because a document able to assert
+its own history could claim a long one. Absent history sets a deterministic floor
+of 45; auto-clear needs a score below 40. Both decisions are right on their own,
+and together they meant **no uploaded document could ever clear autonomously** —
+in a project whose whole claim is autonomous clearing. We had written a control
+around an enrichment step that did not exist. `shipper_registry.py` is that step,
+and it matches on tax ID *and* company name rather than tax ID alone: the tax ID
+is itself read off the untrusted document, so a forgery carrying a real customer's
+number would otherwise inherit that customer's clean history. What we learned is
+that a control can be individually correct and still be wrong in combination, and
+that nothing in a test suite would have told us — every case we had tested was
+*supposed* to be held.
+
+**The agent penalised the shipment for our own security rule.** With the registry
+in place, `clean_bol.pdf` still would not clear: the fraud agent scored it 52 and
+its top finding read *"missing a creation timestamp — highly anomalous, could
+indicate manual record insertion or system bypass."* The timestamp was missing
+because `untrusted.py` deliberately refuses it from documents. We had rendered the
+withheld fields into the prompt as a bare `N/A`, so the model saw an unexplained
+blank and did the reasonable thing with it. The fix is to say that the field is not
+available and that its absence carries no information about the shipment, while
+still never reading the value from the file. It is a good illustration of how a
+prompt leaks the shape of the system around it: the model was not wrong, it was
+under-informed, and the deterministic floor was already the right place for that
+penalty to live.
+
+**We fixed the same fixture bug in one place and left it in another.** The
+headline demo case — a clean garment export that clears itself — described 1,640
+cartons against 820 kg and USD 9,600. That is half a kilo and USD 5.85 a carton,
+and the compliance agent was right to call it undervaluation. It did so
+intermittently, which is worse than always: the flagship auto-clear was a coin
+flip between `AUTO_CLEARED` and `ESCALATED` at a fraud score of 5, and a single
+passing run looked like proof. We found the arithmetic in the sample PDF and
+corrected it there, then missed the identical figures in `simulator.py` for
+another day. The lesson we would keep is about measurement rather than cartons:
+one green run is not a result. Every outcome in this submission is now something
+we reproduced from a reset board at least three times, and the one number that
+genuinely varies is published as a range.
+
+**Two IAM grants that failed in opposite directions.** `publish_decision` returned
+403 on `pubsub.topics.publish` for every case — the action was recorded as failed
+on the trace, which is how we found it, but it had never worked. And our own Cloud
+Build could not deploy: the build service account had no `run.admin`, so the image
+built and pushed and then the deploy step died. Neither surfaced during hand
+deploys from a laptop with owner credentials, which is the general shape of the
+problem — a permission bug is invisible from the machine that has the permission.
+
 **Regional endpoints returned 404 for Gemini 3.5 Flash.** The fix was
 `location="global"` on the client, not a different model. Easy to mistake for a
 model-availability problem and waste an hour on.
@@ -155,10 +203,13 @@ picker.
 
 **We nearly documented results we had not verified.** Writing the testing section,
 we described `clean_bol.pdf` as "transcribed, scored, released" because that is
-what the filename implies. Running it returns `ESCALATED` — the investigation
-agent flags trade-based money laundering, because the declared value is far below
-plausible for the cargo. "Clean" meant a clean *scan*, not a clean shipment. Every
-outcome in the README is now a value we observed, not one we assumed.
+what the filename implies. It returned `ESCALATED`. Chasing why is what uncovered
+the two bugs above — first an incoherent fixture (1,640 cartons against 820 kg and
+USD 9,600, which compliance correctly read as undervaluation), then the missing
+enrichment, then the withheld-field framing. It clears now, and that outcome is
+one we reproduced three times from a reset board rather than concluded from a
+single run — a mistake we also made once along the way, reporting a result as
+stable on one sample and being contradicted by the next.
 
 ## Accomplishments that we're proud of
 
@@ -183,12 +234,20 @@ IAM misconfiguration would have been a security incident in a fail-open system.
 Here it was a logged warning and a held container.
 
 **Verify claims against the deployed thing, not the code you remember writing.**
-Three of the five problems above were found by running the system and reading the
+Three of the problems above were found by running the system and reading the
 output properly, and none of them by re-reading source.
+
+**Controls compose, and the composition is where the bugs are.** Every individual
+rule in this system survived review. The one that made autonomous clearing
+impossible was two correct rules meeting, and the one that scored a clean document
+at 52 was a correct rule being described badly to a model. Reviewing controls one
+at a time would not have caught either.
 
 ## What's next for VF Logistics — Governed Autonomous Fraud Detection
 
-Attaching the boundary to a real approval workflow rather than a published JSON
-document; broadening the deterministic floors with a trade-compliance specialist;
-and per-tenant boundaries so a forwarder can grant a narrower delegation than
-their customs broker.
+Replacing the counterparty book with intake tied to a booking reference issued
+against a customer account, so identity is established before any document is
+read rather than verified after; attaching the boundary to a real approval
+workflow rather than a published JSON document; broadening the deterministic
+floors with a trade-compliance specialist; and per-tenant boundaries so a
+forwarder can grant a narrower delegation than their customs broker.

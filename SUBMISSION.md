@@ -143,11 +143,27 @@ four-page bill of lading. Documents are therefore screened in 400-character
 windows with 120-character overlap, in addition to the full text.
 
 After transcription, `untrusted.py` enforces a **strict field whitelist**.
-`avg_route_cost` and `shipper_tx_count` are deliberately excluded—a document
-that could state its own shipper's history would defeat the thin-history check
-by claiming a long one. `risk_score`, `decision`, and `state` are **forbidden
-fields**; any document attempting to set them is logged and flagged for human
-review.
+`avg_route_cost`, `shipper_tx_count` and `created_at` are deliberately excluded—a
+document that could state its own shipper's history would defeat the thin-history
+check by claiming a long one. `risk_score`, `decision`, and `state` are
+**forbidden fields**; any document attempting to set them is logged and flagged
+for human review.
+
+That exclusion has to be paid for somewhere. Unverified history sets a
+deterministic floor of 45 against an auto-clear threshold of 40, which meant no
+uploaded document could ever clear autonomously — the control assumed an
+enrichment step nobody had built. `shipper_registry.py` is that step: it resolves
+the claimed shipper against our own counterparty book and supplies the history the
+document is not allowed to assert about itself. Identity has to match on tax ID
+**and** company name, because the tax ID is read off the untrusted document too—a
+forgery carrying a real customer's number would otherwise inherit their clean
+record. A number matching under a different name is treated as worse than unknown.
+
+With it, `sample_docs/clean_bol.pdf` reaches `AUTO_CLEARED` and
+`sample_docs/dirty_bol.pdf`, which carries no usable tax ID, still `ESCALATED`.
+The difference between the two is whether we can vouch for the counterparty from
+our own records, which is the only basis on which a machine should be releasing
+cargo unsupervised.
 
 ### Scale-to-zero without losing work
 
@@ -167,11 +183,14 @@ One click and no further input:
 | Shipment | Fraud risk | Compliance | Outcome | Actions executed |
 |---|---|---|---|---|
 | Clean garment export | 5/100 | not needed | `AUTO_CLEARED` | released for delivery |
-| Underpriced furniture, thin history | 58/100 | cleared | `HELD_FOR_REVIEW` | analyst assigned |
+| Underpriced furniture, thin history | 45–48/100 | cleared | `HELD_FOR_REVIEW` | analyst assigned |
 | Dual-use goods, 11-day-old shell company | 95/100 | review required | `ESCALATED` | held, SAR drafted, compliance notified, decision published |
 
 All three reached terminal state in roughly 30 seconds. Average agent hop was
-7.3 seconds across six Gemini calls.
+7.3 seconds across six Gemini calls. Four consecutive runs from a reset board
+produced the same three outcomes; the middle score is a range because it is a
+model judgement at `temperature=0.1`, and only which side of the threshold it
+falls on is deterministic.
 
 ### Features and functionality
 
