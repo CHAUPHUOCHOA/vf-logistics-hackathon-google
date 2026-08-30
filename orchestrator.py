@@ -318,6 +318,8 @@ async def ingest_document(
         "agent": "document_intake",
         "latency_ms": response.get("latency_ms"),
         "model": response.get("model"),
+        "input_tokens": response.get("input_tokens", 0),
+        "output_tokens": response.get("output_tokens", 0),
         "parse_error": False,
         "at": response.get("at"),
         "result": {
@@ -1258,6 +1260,7 @@ async def snapshot(limit: int = 60) -> dict[str, Any]:
     latencies: list[int] = []
     total_input_tokens = 0
     total_output_tokens = 0
+    estimated_cost = 0.0
     tokens_by_agent: dict[str, dict[str, int]] = {}
     
     for case in cases:
@@ -1270,6 +1273,14 @@ async def snapshot(limit: int = 60) -> dict[str, Any]:
             output_t = step.get("output_tokens", 0) or 0
             total_input_tokens += input_t
             total_output_tokens += output_t
+
+            # Price each step at its own model's rate. Investigation runs on
+            # Flash-Lite at half the Flash rate, so a single project-wide rate
+            # would overstate the bill and hide the reason for the split.
+            step_pricing = model_config.pricing_for(step.get("model"))
+            estimated_cost += (
+                input_t * step_pricing["input"] + output_t * step_pricing["output"]
+            ) / 1_000_000
             
             agent = step.get("agent", "unknown")
             if agent not in tokens_by_agent:
@@ -1282,12 +1293,8 @@ async def snapshot(limit: int = 60) -> dict[str, Any]:
     awaiting_human = sum(1 for c in cases if c["state"] in AWAITING_HUMAN)
 
     readiness = await governance.agent_readiness()
-    
-    # Dynamic pricing based on selected model
-    pricing = model_config.get_pricing()
-    estimated_cost = round(
-        (total_input_tokens * pricing["input"] + total_output_tokens * pricing["output"]) / 1_000_000, 6
-    )
+
+    estimated_cost = round(estimated_cost, 6)
 
     return {
         "cases": cases,

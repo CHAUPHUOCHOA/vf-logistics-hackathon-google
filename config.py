@@ -60,6 +60,18 @@ def get_pricing() -> dict:
     """Get pricing info for current model."""
     return PRICING.get(_model_id, PRICING["gemini-3.5-flash"])
 
+def pricing_for(model: str | None) -> dict:
+    """
+    Get pricing for a specific model id.
+
+    Cost must be computed per step, not per project: the investigation agent runs
+    on Flash-Lite at half the Flash rate, so pricing every token at the currently
+    selected model's rate would misreport the bill.
+    """
+    if not model:
+        return PRICING["gemini-3.5-flash"]
+    return PRICING.get(model, PRICING["gemini-3.5-flash"])
+
 def get_all_models() -> list[dict]:
     """Get list of all available models with their info."""
     return [
