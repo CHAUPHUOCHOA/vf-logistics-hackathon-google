@@ -201,8 +201,15 @@ async def screen(text: str, stage: str) -> dict[str, Any]:
             verdict["confidence"] = outcome.get("confidence")
             verdict["detail"] = (
                 f"prompt injection matched at {outcome.get('confidence')} "
+                # windows[0] is the whole document and windows[1:] are the
+                # sliding passes, so this index and `windows_screened` count
+                # different things: one names which sliding window matched, the
+                # other how many calls were made in total. Both are stated, in
+                # those terms, because reporting "window 3 of 5" next to
+                # "windows_screened: 4" reads like an off-by-one bug.
                 + ("on the whole document" if index == 0
-                   else f"in window {index} of {len(windows) - 1}")
+                   else f"in sliding window {index} of {len(windows) - 1}")
+                + f" ({index + 1} pass(es) screened)"
             )
             return verdict
 
