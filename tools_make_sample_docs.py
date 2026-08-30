@@ -58,7 +58,15 @@ CLEAN = [
     ("Country", "Singapore"),
     ("", None),
     ("CARGO", None),
-    ("Description of Goods", "Woven cotton garments, 1,640 cartons, retail packed"),
+    # 164 cartons at 820 kg is 5 kg a carton, and USD 9,600 is USD 58.50 a
+    # carton or USD 11.71 a kilo: unremarkable for wholesale cotton garments.
+    # An earlier revision said 1,640 cartons against the same weight and value,
+    # which works out at half a kilo and USD 5.85 per carton. Compliance read
+    # that - correctly - as suspected undervaluation and an inconsistent
+    # weight-to-package ratio, and returned REVIEW_REQUIRED, so the fixture
+    # escalated or held depending on how the model felt that run. A fixture
+    # meant to represent unremarkable paperwork has to be internally coherent.
+    ("Description of Goods", "Woven cotton garments, 164 cartons, retail packed"),
     ("HS Code", "6205.20"),
     ("Gross Weight", "820 kg"),
     ("Declared Value", "USD 9,600.00"),
