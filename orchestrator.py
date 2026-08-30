@@ -45,6 +45,7 @@ import document_render
 import document_store
 import governance
 import model_armor
+import shipper_registry
 import tools
 import untrusted
 import verifier
@@ -328,6 +329,13 @@ async def ingest_document(
         # needs screening, so give it a synthetic id rather than dropping it.
         shipment["shipment_id"] = new_id("DOC")
 
+    # Supply the one fact the document is not allowed to assert about itself.
+    # Deliberately after sanitisation, so the file cannot present its own
+    # history, and before the agents run, so they score the enriched record.
+    # An unknown or mismatched counterparty writes nothing and leaves the
+    # unverified-history floor in verifier.py standing.
+    counterparty = shipper_registry.enrich(shipment)
+
     case_id = f"CASE-{shipment['shipment_id']}"
     receipt = await document_store.archive(
         document_bytes,
@@ -356,6 +364,7 @@ async def ingest_document(
             "forbidden_fields_attempted": sanitised["forbidden_fields_attempted"],
             "injection_screening": screening,
             "model_armor": pre_screen or post_screen,
+            "counterparty": counterparty,
         },
     }
 
