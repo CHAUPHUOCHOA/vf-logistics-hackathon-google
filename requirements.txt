@@ -1,12 +1,13 @@
 # Google Cloud AI
+# google-genai provides `from google import genai` — the SDK all four agents use.
+# Declared explicitly: it is otherwise only present as a transitive dependency of
+# google-cloud-aiplatform, which is fragile.
+google-genai>=1.0.0
 google-cloud-aiplatform>=1.38.0
-google-generativeai>=0.3.0
-google-adk>=0.1.0
 
 # Google Cloud Services
 google-cloud-firestore>=2.11.0
 google-cloud-pubsub>=2.18.0
-google-cloud-bigquery>=3.11.0
 google-cloud-storage>=2.10.0
 
 # Web Framework
