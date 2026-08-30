@@ -83,6 +83,8 @@ def envelope(
     raw: str,
     latency_ms: int,
     legacy_key: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
     **ids: Any,
 ) -> dict[str, Any]:
     """
@@ -97,6 +99,8 @@ def envelope(
         "result": result or {},
         "model": model,
         "latency_ms": latency_ms,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
         "at": utcnow(),
         "parse_error": error is not None,
     }
@@ -105,3 +109,32 @@ def envelope(
         out["raw"] = raw
     out[legacy_key] = result or {}
     return out
+
+
+def extract_tokens(response: Any) -> tuple[int, int]:
+    """Extract input/output token counts from Gemini response.
+    
+    Handles both standard responses and thinking-enabled responses.
+    Vertex AI SDK uses prompt_token_count and candidates_token_count.
+    AI Studio SDK may use total_input_tokens, total_output_tokens, total_thought_tokens.
+    """
+    try:
+        meta = getattr(response, 'usage_metadata', None)
+        if meta:
+            # Standard Vertex AI SDK fields (used by both normal and thinking responses)
+            input_t = getattr(meta, 'prompt_token_count', 0) or 0
+            output_t = getattr(meta, 'candidates_token_count', 0) or 0
+            
+            # If standard fields have values, use them
+            if input_t > 0 or output_t > 0:
+                return input_t, output_t
+            
+            # Fallback: Try AI Studio SDK thinking response fields
+            input_t = getattr(meta, 'total_input_tokens', 0) or 0
+            output_t = getattr(meta, 'total_output_tokens', 0) or 0
+            thought_t = getattr(meta, 'total_thought_tokens', 0) or 0
+            if input_t > 0 or output_t > 0 or thought_t > 0:
+                return input_t, output_t + thought_t
+    except Exception:
+        pass
+    return 0, 0

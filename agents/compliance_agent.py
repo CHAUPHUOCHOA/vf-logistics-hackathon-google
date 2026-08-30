@@ -11,7 +11,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from ._common import Timer, envelope, parse_model_json
+from ._common import Timer, envelope, parse_model_json, extract_tokens
+import config as model_config
 
 PROJECT_ID = os.getenv("PROJECT_ID", "project-93ded24f-21c3-4f1b-a7d")
 LOCATION = os.getenv("LOCATION", "global")
@@ -22,7 +23,8 @@ client = genai.Client(
     location=LOCATION
 )
 
-MODEL_ID = "gemini-3.5-flash"
+def get_model_id():
+    return model_config.get_model()
 
 COMPLIANCE_PROMPT = """
 You are a compliance screening agent for VF Logistics, specializing in:
@@ -106,7 +108,7 @@ async def screen_shipment(shipment_data: dict[str, Any]) -> dict[str, Any]:
     
     with Timer() as timer:
         response = await client.aio.models.generate_content(
-            model=MODEL_ID,
+            model=get_model_id(),
             contents=[
                 types.Content(
                     role="user",
@@ -126,13 +128,16 @@ async def screen_shipment(shipment_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     parsed, error = parse_model_json(response.text)
+    input_tokens, output_tokens = extract_tokens(response)
     return envelope(
         agent="compliance",
-        model=MODEL_ID,
+        model=get_model_id(),
         result=parsed,
         error=error,
         raw=response.text or "",
         latency_ms=timer.ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         legacy_key="screening_result",
         shipment_id=shipment_data.get("shipment_id"),
     )
@@ -153,7 +158,7 @@ async def screen_entity(entity_data: dict[str, Any]) -> dict[str, Any]:
     
     with Timer() as timer:
         response = await client.aio.models.generate_content(
-            model=MODEL_ID,
+            model=get_model_id(),
             contents=[
                 types.Content(
                     role="user",
@@ -168,13 +173,16 @@ async def screen_entity(entity_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     parsed, error = parse_model_json(response.text)
+    input_tokens, output_tokens = extract_tokens(response)
     return envelope(
         agent="compliance_entity",
-        model=MODEL_ID,
+        model=get_model_id(),
         result=parsed,
         error=error,
         raw=response.text or "",
         latency_ms=timer.ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         legacy_key="screening_result",
         entity_name=entity_data.get("name"),
     )
@@ -185,7 +193,7 @@ def get_agent_info() -> dict[str, str]:
     return {
         "name": "VF Logistics Compliance Screening Agent",
         "version": "1.0.0",
-        "model": MODEL_ID,
+        "model": get_model_id(),
         "capabilities": [
             "sanctions_screening",
             "trade_compliance",

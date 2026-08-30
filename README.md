@@ -6,8 +6,9 @@
 
 A multi-agent system that screens logistics shipments for fraud, sanctions/trade
 compliance violations, and runs deep-dive investigations — without a human
-walking it through each step. Built 100% on Google Cloud: Gemini 3.5 Flash on
-Vertex AI + Cloud Run + Firestore + Pub/Sub.
+walking it through each step. Built 100% on Google Cloud: Gemini 3.5 Flash and
+Gemini 3.5 Flash-Lite on Vertex AI + Cloud Run + Firestore + Pub/Sub +
+Cloud Storage + Model Armor.
 
 A shipment event arrives and nobody touches it again. A background worker scores
 it for fraud, decides on that score whether compliance screening is warranted,
@@ -46,7 +47,25 @@ governance control plane:
 | **Document Intake** | Transcribes bills of lading, invoices and packing lists into a structured record. Reports missing fields as missing rather than inventing them. | `temperature=0.0`, multimodal PDF/image input |
 | **Fraud Detection** | Price manipulation, route fraud, weight/dimension fraud, document fraud, identity fraud, duplicate & time fraud. | `temperature=0.1` for stable scoring |
 | **Compliance Screening** | Sanctions exposure (OFAC/UN/EU patterns), trade & regulatory compliance, AML indicators. | `temperature=0.1`, runs in parallel with fraud |
-| **AI Investigation** | Multi-step case investigation, pattern analysis, network mapping. | **Extended thinking** — `thinking_budget=8000` |
+| **AI Investigation** | Multi-step case investigation, pattern analysis, network mapping. | **Gemini 3.5 Flash-Lite**, **extended thinking** — `thinking_budget=8000` |
+
+### Two models, chosen per task
+
+The first three agents run **Gemini 3.5 Flash**: document intake needs native
+multimodal PDF reading, and fraud and compliance screening are the calls whose
+scores hold or release cargo, so they get the stronger model.
+
+The investigation agent runs **Gemini 3.5 Flash-Lite**. By the time a case
+reaches it, the fraud and compliance findings already exist — investigation
+synthesises and summarises them rather than making the primary judgement.
+Flash-Lite is half the input cost and half the output cost for that shape of
+work, and it still accepts `thinking_budget`, so the multi-hop reasoning the
+case write-up needs is preserved.
+
+Both models are reached through the same `google-genai` SDK client with
+`vertexai=True`, so the split costs no extra integration surface. Every agent
+response envelope records which model produced it, visible in the per-case trace
+in the dashboard.
 
 All return strict JSON (`response_mime_type="application/json"`), parsed
 server-side, so downstream routing is machine-readable.
@@ -121,16 +140,22 @@ released.
       │                 └─ /api/v1/**            │
       │                      │                    │
       │      agents/ (google-genai SDK, async)    │
+      │       ├─ document_agent.py                │
       │       ├─ fraud_detection_agent.py         │
       │       ├─ compliance_agent.py              │
       │       └─ investigation_agent.py           │
       └───────────────────┬───────────────────────┘
                           │  Vertex AI (vertexai=True)
                           ▼
-              ┌───────────────────────────┐
-              │  Gemini 3.5 Flash         │
-              │  location: global         │
-              └───────────────────────────┘
+         ┌──────────────────────────────────────┐
+         │  Gemini 3.5 Flash                    │
+         │    document · fraud · compliance     │
+         │                                      │
+         │  Gemini 3.5 Flash-Lite               │
+         │    investigation                     │
+         │                                      │
+         │  location: global                    │
+         └──────────────────────────────────────┘
 ```
 
 See `docs/architecture.png` for the diagram submitted to Devpost.
@@ -187,12 +212,15 @@ the routing policy is configuration rather than something buried in code.
 - **Async SDK calls** (`client.aio.models.generate_content`) with gunicorn
   `--threads 8` — a single instance handles concurrent analyses while each waits
   on model latency.
-- **`--no-cpu-throttling --min-instances=1`** — Cloud Run normally freezes CPU
-  between requests, which would suspend the background worker the moment a
-  request finished. This service deliberately gives up scale-to-zero to buy
-  genuine background execution: an unattended workflow that only runs while
-  someone is watching is not unattended. `POST /api/v1/orchestrator/tick` exists
-  as a Cloud Scheduler-driven fallback for deployments that keep throttling on.
+- **`WORKER_MODE=ondemand` with `--min-instances=0`** — Cloud Run freezes CPU
+  between requests, which would suspend a background loop the moment a request
+  finished. Rather than pay for `--no-cpu-throttling --min-instances=1` around
+  the clock, cases advance *inside* request handlers: the Pub/Sub push, the
+  document upload, and the dashboard's own state poll each carry the pipeline
+  forward a step. The service scales to zero when no shipment exists.
+  `POST /api/v1/orchestrator/tick` and `/drain` are the Cloud Scheduler levers
+  for clearing a backlog unattended, and `WORKER_MODE=poll` still exists for
+  deployments that would rather pay for a true always-on loop.
 - **Claims are leases, not locks** — a case claimed by an instance that then
   crashes or is replaced mid-rollout becomes claimable again after
   `CLAIM_LEASE_SECONDS`. An earlier build used permanent claims and stranded
@@ -215,8 +243,9 @@ the routing policy is configuration rather than something buried in code.
 
 | Layer | Choice |
 |---|---|
-| Model | **Gemini 3.5 Flash** via **Vertex AI** |
+| Model | **Gemini 3.5 Flash** (document, fraud, compliance) + **Gemini 3.5 Flash-Lite** (investigation), both via **Vertex AI** |
 | Agent framework | **Google GenAI SDK** (`google-genai`) |
+| Input security | **Model Armor** — windowed prompt-injection screening |
 | Compute | **Cloud Run** (source deploy → Cloud Build → Artifact Registry) |
 | State | **Firestore** (Native mode, `asia-southeast1`) — cases, events, audit log |
 | Messaging | **Pub/Sub** — `shipment-events` in, `case-decisions` out |
@@ -226,7 +255,8 @@ the routing policy is configuration rather than something buried in code.
 
 Requirement check against the hackathon rules:
 
-- Gemini 3.5 or newer, via Vertex AI -> `gemini-3.5-flash`
+- Gemini 3.5 or newer, via Vertex AI -> `gemini-3.5-flash` and
+  `gemini-3.5-flash-lite`
 - At least one Google agent framework -> Google GenAI SDK
 - Google Cloud infrastructure -> Cloud Run (compute), Firestore (case state and
   audit trail), Pub/Sub (event ingestion and decision fan-out)
@@ -410,28 +440,28 @@ gcloud run deploy vf-fraud-detection \
   --region asia-southeast1 \
   --allow-unauthenticated \
   --memory 1Gi --cpu 1 --timeout 300 \
-  --min-instances 1 --max-instances 3 \
-  --no-cpu-throttling \
-  --set-env-vars "PROJECT_ID=$PROJECT_ID,LOCATION=global,STORE_BACKEND=firestore,DECISIONS_TOPIC=case-decisions,CLAIM_LEASE_SECONDS=120"
+  --min-instances 0 --max-instances 3 \
+  --set-env-vars "PROJECT_ID=$PROJECT_ID,LOCATION=global,WORKER_MODE=ondemand,STORE_BACKEND=firestore,DECISIONS_TOPIC=case-decisions,CLAIM_LEASE_SECONDS=120"
 ```
 
-`--no-cpu-throttling` and `--min-instances 1` are not optional for the autonomous
-behaviour. Without them Cloud Run suspends the container between requests and the
-background worker stops advancing cases as soon as the browser goes idle.
+This is the deployed configuration: `WORKER_MODE=ondemand` advances cases inside
+request handlers, so the service costs nothing while idle. If you would rather
+run a genuine always-on background loop, deploy with `WORKER_MODE=poll` **and**
+add `--no-cpu-throttling --min-instances 1` — without both flags Cloud Run
+suspends the container between requests and the loop stops advancing cases.
 
-Verify — `/health` reports which store backend is live and whether the worker
-loop is running, and `ticks` should climb on its own between two calls:
+Verify — `/health` reports which store backend is live and the worker mode:
 
 ```bash
 BASE=$(gcloud run services describe vf-fraud-detection \
   --region asia-southeast1 --format='value(status.url)')
 
-curl -s $BASE/health          # expect worker.running=true, ticks increasing
-curl -s $BASE/agents
+curl -s $BASE/health          # expect store.backend=firestore, worker.mode=ondemand
+curl -s $BASE/agents          # each agent reports the model it runs on
 
 # Run the autonomous pipeline end to end
 curl -s -X POST $BASE/api/v1/simulate
-curl -s $BASE/api/v1/orchestrator/state   # poll; cases advance with no further input
+curl -s $BASE/api/v1/orchestrator/state   # poll; each poll also advances a step
 ```
 
 Open `$BASE` in a browser for the dashboard.
@@ -441,6 +471,90 @@ Open `$BASE` in a browser for the dashboard.
 ```bash
 gcloud run services delete vf-fraud-detection --region asia-southeast1
 ```
+
+---
+
+## Reproducible testing
+
+Every step below runs against the live service with no setup. Replace `$BASE`
+with your own URL if you deployed your own copy.
+
+```bash
+BASE=https://vf-fraud-detection-304507056252.asia-southeast1.run.app
+```
+
+### Test 1 — the service is up and both models are wired
+
+```bash
+curl -s $BASE/health
+curl -s $BASE/agents
+```
+
+Expect `status: healthy`, `store.backend: firestore`, and `/agents` reporting
+`gemini-3.5-flash` for document/fraud/compliance and `gemini-3.5-flash-lite`
+for investigation.
+
+### Test 2 — the multi-model split is real, not just documented
+
+Two calls, two different models in the response envelope:
+
+```bash
+# Fraud detection → gemini-3.5-flash
+curl -s -X POST $BASE/api/v1/fraud/analyze \
+  -H 'Content-Type: application/json' \
+  -d '{"shipment_id":"T-1","origin":"Ho Chi Minh City","destination":"Hanoi",
+       "weight_kg":150,"declared_value":50000000,"shipping_cost":1200000,
+       "avg_route_cost":3000000,"shipper_name":"Thanh Phat Trading Co",
+       "shipper_tx_count":2}' | grep -o '"model":"[^"]*"'
+
+# Investigation → gemini-3.5-flash-lite
+curl -s -X POST $BASE/api/v1/investigation/case \
+  -H 'Content-Type: application/json' \
+  -d '{"case_id":"T-1","trigger_reason":"reproducible test","risk_score":75}' \
+  | grep -o '"model":"[^"]*"'
+```
+
+### Test 3 — the autonomous pipeline, one call and no further input
+
+```bash
+curl -s -X POST $BASE/api/v1/orchestrator/reset
+curl -s -X POST $BASE/api/v1/simulate
+
+# Poll. Each poll also advances the pipeline one step (WORKER_MODE=ondemand).
+curl -s $BASE/api/v1/orchestrator/state
+```
+
+Repeat the state call until all three cases are terminal. Expect exactly three
+different outcomes — `AUTO_CLEARED`, `HELD_FOR_REVIEW`, `ESCALATED` — from the
+same code path with no human decision in between.
+
+### Test 4 — the risk floor cannot be argued down
+
+Send a dual-use shipment whose fields invite a low score. The verifier's
+deterministic floor overrides whatever the model returns:
+
+```bash
+curl -s $BASE/api/v1/orchestrator/state | grep -o '"effective_risk":[0-9]*'
+```
+
+On the escalated case, `effective_risk` stays at or above the floor even when
+`model_risk` is lower — `effective_risk = max(model_risk, floor)`.
+
+### Test 5 — fail-closed governance
+
+```bash
+curl -s $BASE/api/v1/governance/boundaries
+```
+
+With no active boundary the system reports `SUSPENDED`: agents still analyse and
+propose, but every protected action is refused. Publish one via
+`POST /api/v1/governance/publish` and the same case executes.
+
+### Zero-setup path
+
+`GET $BASE/demo` runs the fraud agent on a built-in sample shipment — one
+request, no body, no configuration. Open `$BASE` in a browser for the dashboard,
+which shows the per-case trace with the real model id and latency on every hop.
 
 ---
 
@@ -465,9 +579,12 @@ gcloud run services delete vf-fraud-detection --region asia-southeast1
 | `MAX_BULK_COUNT` | Cap on the volume-test endpoint | `10` |
 | `PORT` | Port gunicorn binds to (set by Cloud Run) | `8080` |
 
-The model ID is pinned in code (`MODEL_ID = "gemini-3.5-flash"`) in each agent
-module rather than read from the environment, so a misconfigured deploy cannot
-silently downgrade to a model the hackathon rules disallow.
+The model ID is pinned in code in each agent module rather than read from the
+environment, so a misconfigured deploy cannot silently downgrade to a model the
+hackathon rules disallow. `config.py` holds the shared registry and per-token
+pricing; the investigation agent overrides it to `gemini-3.5-flash-lite`
+unconditionally, so its cost profile cannot be changed by a runtime switch
+either.
 
 ### A note on cost
 
@@ -537,21 +654,35 @@ Chat endpoint.
 .
 ├── main.py                       Flask app, routes, async bridge, worker boot
 ├── orchestrator.py               Autonomous state machine + background worker
+├── config.py                     Model registry, per-token pricing, runtime switch
+├── governance.py                 Delegation Boundary + fail-closed execution gate
+├── verifier.py                   Deterministic risk floor (no model consulted)
+├── untrusted.py                  Schema whitelist for document-sourced fields
+├── model_armor.py                Windowed prompt-injection screening
 ├── store.py                      Case/event/audit state (Firestore, memory fallback)
+├── document_store.py             Cloud Storage document archive
+├── executor_client.py            Calls the split-identity executor service
 ├── tools.py                      Actions taken on the operator's behalf
 ├── simulator.py                  Scripted shipment events for the demo
+├── tools_make_sample_docs.py     Generates the sample BOL/invoice PDFs
 ├── agents/
 │   ├── __init__.py               Public agent API
 │   ├── _common.py                Shared JSON parsing, timing, response envelope
-│   ├── fraud_detection_agent.py  Fraud scoring
-│   ├── compliance_agent.py       Sanctions / trade / AML
-│   └── investigation_agent.py    Deep-dive, extended thinking
+│   ├── document_agent.py         Multimodal PDF/image intake      — Flash
+│   ├── fraud_detection_agent.py  Fraud scoring                    — Flash
+│   ├── compliance_agent.py       Sanctions / trade / AML          — Flash
+│   └── investigation_agent.py    Deep-dive, extended thinking     — Flash-Lite
 ├── static/
 │   └── index.html                Dashboard (no build step)
+├── docs/
+│   ├── architecture.html         Diagram source
+│   ├── architecture.png          Diagram submitted to Devpost
+│   └── VIDEO_SCRIPT.md           Demo recording script
 ├── Dockerfile                    python:3.11-slim + gunicorn
 ├── cloudbuild.yaml               Cloud Build config
 ├── requirements.txt
 ├── .env.example
+├── SUBMISSION.md                 Devpost copy
 └── README.md
 ```
 

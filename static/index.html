@@ -115,21 +115,64 @@
   .ccard {
     background: #1b2440; border: 1px solid var(--line); border-left: 3px solid var(--blue);
     border-radius: 9px; padding: 9px 10px; margin-bottom: 8px; cursor: pointer;
-    font-size: 11px; transition: transform .12s;
+    font-size: 11px; transition: transform .12s, box-shadow .3s, background .3s;
   }
   .ccard:hover { transform: translateX(2px); border-color: var(--blue); }
+  .ccard.state-changed {
+    animation: highlight-pulse 0.8s ease-out;
+  }
+  .ccard.new-case {
+    animation: slide-in 0.5s ease-out;
+  }
+  .ccard.processing {
+    box-shadow: 0 0 12px rgba(255, 205, 86, 0.4);
+    border-left-color: var(--yellow);
+  }
+  @keyframes highlight-pulse {
+    0% { transform: scale(1.05); box-shadow: 0 0 20px var(--blue); background: rgba(79, 172, 254, 0.2); }
+    100% { transform: scale(1); box-shadow: none; background: #1b2440; }
+  }
+  @keyframes slide-in {
+    from { opacity: 0; transform: translateY(-15px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
   .ccard .cid { font-weight: 700; font-size: 11px; color: #e8edf7; word-break: break-all; }
   .ccard .cmeta { color: var(--muted); margin-top: 4px; }
   .working { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
     background: var(--yellow); margin-right: 5px; animation: pulse 1s infinite; }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
 
+  /* ---- cost monitor ---- */
+  .cost-monitor { margin-top: 22px; }
+  .cost-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .cost-header h3 { margin: 0; font-size: 14px; }
+  .cost-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .cost-kpi { background: #141c33; border: 1px solid var(--line); border-radius: 10px; padding: 12px; text-align: center; }
+  .cost-kpi.highlight-cost { background: linear-gradient(135deg, #1a3a1a 0%, #0d1f0d 100%); border-color: var(--green); }
+  .cost-k { font-size: 10px; font-weight: 700; letter-spacing: .5px; color: var(--muted); margin-bottom: 4px; }
+  .cost-v { font-size: 18px; font-weight: 700; color: #e8edf7; font-variant-numeric: tabular-nums; }
+  .cost-kpi.highlight-cost .cost-v { color: var(--green); }
+  .cost-breakdown { border-top: 1px solid var(--line); padding-top: 12px; }
+  .cost-breakdown h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); margin: 0 0 8px; }
+  .agent-cost { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #141c33; border-radius: 6px; margin-bottom: 6px; font-size: 11px; }
+  .agent-cost .agent-name { font-weight: 700; color: #e8edf7; }
+  .agent-cost .agent-stats { color: var(--muted); font-variant-numeric: tabular-nums; }
+
   /* ---- feeds ---- */
   .opsgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 22px; }
   .feed { max-height: 340px; overflow-y: auto; margin-top: 12px; }
-  .fitem { border-left: 2px solid var(--line); padding: 7px 0 7px 12px; font-size: 12px; }
+  .fitem { border-left: 2px solid var(--line); padding: 7px 0 7px 12px; font-size: 12px; transition: all 0.2s; }
+  .fitem.highlight { background: rgba(79, 172, 254, 0.15); border-left-color: var(--blue); }
   .fitem .ft { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
   .fitem .fm { margin-top: 2px; line-height: 1.5; }
+  .feed-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .feed-header h3 { margin: 0; }
+  .feed-filter { display: flex; align-items: center; gap: 8px; }
+  .feed-filter select { background: #0f1730; color: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font-size: 11px; cursor: pointer; }
+  .feed-filter select:focus { outline: none; border-color: var(--blue); }
+  .feed-filter .clear-filter { background: none; border: none; color: var(--muted); font-size: 11px; cursor: pointer; padding: 4px 8px; }
+  .feed-filter .clear-filter:hover { color: var(--blue); }
+  .case-filter-badge { background: var(--blue); color: #fff; font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
   /* ---- compliance fieldset ---- */
   .fieldset { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
@@ -305,6 +348,54 @@
 
     <div class="kpis" id="kpis"></div>
 
+    <!-- AI Settings Panel - Future Development (hidden for now) -->
+    <!--
+    <div class="card" style="margin-bottom:16px">
+      <div class="cost-header">
+        <h3>AI Settings</h3>
+        <div class="hint">Configure the Gemini model used for all agents</div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;margin-top:12px">
+        <label style="font-size:13px;color:var(--muted)">Model:</label>
+        <select id="modelSelect" style="padding:8px 12px;border-radius:8px;background:#1a2340;border:1px solid var(--line);color:var(--txt);font-size:13px;min-width:280px">
+          <option value="gemini-3.5-flash">Gemini 3.5 Flash (Balanced)</option>
+          <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Budget)</option>
+          <option value="gemini-3.6-flash">Gemini 3.6 Flash (Enhanced)</option>
+          <option value="gemini-3.7-flash">Gemini 3.7 Flash (Latest)</option>
+        </select>
+        <span id="modelPricing" style="font-size:12px;color:var(--muted)">$0.15/1M in, $0.60/1M out</span>
+      </div>
+    </div>
+    -->
+
+    <div class="card cost-monitor">
+      <div class="cost-header">
+        <h3>Cost Monitor</h3>
+        <div class="hint" id="costHint">Real-time API usage tracking | <span id="currentModelName">Gemini 3.5 Flash</span> pricing</div>
+      </div>
+      <div class="cost-kpis" id="costKpis">
+        <div class="cost-kpi">
+          <div class="cost-k">API CALLS</div>
+          <div class="cost-v">0</div>
+        </div>
+        <div class="cost-kpi">
+          <div class="cost-k">INPUT TOKENS</div>
+          <div class="cost-v">0</div>
+        </div>
+        <div class="cost-kpi">
+          <div class="cost-k">OUTPUT TOKENS</div>
+          <div class="cost-v">0</div>
+        </div>
+        <div class="cost-kpi highlight-cost">
+          <div class="cost-k">EST. COST</div>
+          <div class="cost-v">$0.0000</div>
+        </div>
+      </div>
+      <div class="cost-breakdown" id="costBreakdown">
+        <div class="hint">No agent calls yet</div>
+      </div>
+    </div>
+
     <div class="card">
       <h3>Case pipeline</h3>
       <div class="hint">Cases move left to right without supervision. Click one to open its trace.</div>
@@ -313,11 +404,27 @@
 
     <div class="opsgrid">
       <div class="card">
-        <h3>Live event feed</h3>
+        <div class="feed-header">
+          <h3>Live event feed</h3>
+          <div class="feed-filter">
+            <select id="feedFilter" onchange="filterFeed('feed', this.value)">
+              <option value="">All cases</option>
+            </select>
+            <button class="clear-filter" onclick="clearFeedFilter()" title="Clear filter">✕</button>
+          </div>
+        </div>
         <div class="feed" id="feed"></div>
       </div>
       <div class="card">
-        <h3>Actions taken on your behalf</h3>
+        <div class="feed-header">
+          <h3>Actions taken on your behalf</h3>
+          <div class="feed-filter">
+            <select id="auditFilter" onchange="filterFeed('auditfeed', this.value)">
+              <option value="">All cases</option>
+            </select>
+            <button class="clear-filter" onclick="clearFeedFilter()" title="Clear filter">✕</button>
+          </div>
+        </div>
         <div class="hint">Every entry is an auditable state change, not a suggestion.</div>
         <div class="feed" id="auditfeed"></div>
       </div>
@@ -537,6 +644,19 @@
 <script>
 const out = document.getElementById('out');
 let agent = 'fraud';
+
+/* Future Development: Model Selection
+const MODEL_PRICING = {
+  "gemini-3.5-flash": { name: "Gemini 3.5 Flash", input: 0.15, output: 0.60 },
+  "gemini-3.5-flash-lite": { name: "Gemini 3.5 Flash-Lite", input: 0.075, output: 0.30 },
+  "gemini-3.6-flash": { name: "Gemini 3.6 Flash", input: 0.15, output: 0.60 },
+  "gemini-3.7-flash": { name: "Gemini 3.7 Flash", input: 0.15, output: 0.60 }
+};
+async function loadModelConfig() { ... }
+function updateModelDisplay(modelId) { ... }
+document.getElementById('modelSelect').onchange = async function() { ... };
+loadModelConfig();
+*/
 
 const ENDPOINTS = {
   fraud: '/api/v1/fraud/analyze',
@@ -831,7 +951,8 @@ const STATES = [
   ['SPECIALISTS_DONE',    'Fraud + compliance'],
   ['INVESTIGATED',        'Investigated'],
   ['AUTO_CLEARED',        'Auto-cleared'],
-  ['PENDING_HUMAN',       'Awaiting human']
+  ['PENDING_HUMAN',       'Awaiting human'],
+  ['ESCALATED',           'Escalated']
 ];
 
 // Outcomes that still need a person are folded into the awaiting-human column,
@@ -839,7 +960,6 @@ const STATES = [
 // the same thing.
 const COL_OF = {
   HELD_FOR_REVIEW: 'PENDING_HUMAN',
-  ESCALATED: 'PENDING_HUMAN',
   RELEASED_BY_HUMAN: 'AUTO_CLEARED',
   BLOCKED_BY_HUMAN: 'PENDING_HUMAN',
   DEAD_LETTER: 'PENDING_HUMAN'
@@ -863,6 +983,8 @@ const TERMINAL = [
 let polling = true;
 let openCase = null;
 let lastSnap = null;
+let filterCase = null; // Current case filter for feeds
+let prevCaseStates = {}; // Track previous states for animation
 
 function hhmmss(iso) {
   if (!iso) return '';
@@ -876,6 +998,53 @@ function kpiTile(k, v, s, color) {
     <div class="v"${color ? ` style="color:${color}"` : ''}>${esc(v)}</div>
     <div class="s">${esc(s || '')}</div>
   </div>`;
+}
+
+function renderCostMonitor(snap) {
+  const inputTokens = snap.total_input_tokens || 0;
+  const outputTokens = snap.total_output_tokens || 0;
+  const agentCalls = snap.agent_calls || 0;
+  const cost = snap.estimated_cost_usd || 0;
+  
+  document.getElementById('costKpis').innerHTML = `
+    <div class="cost-kpi">
+      <div class="cost-k">API CALLS</div>
+      <div class="cost-v">${agentCalls.toLocaleString()}</div>
+    </div>
+    <div class="cost-kpi">
+      <div class="cost-k">INPUT TOKENS</div>
+      <div class="cost-v">${inputTokens.toLocaleString()}</div>
+    </div>
+    <div class="cost-kpi">
+      <div class="cost-k">OUTPUT TOKENS</div>
+      <div class="cost-v">${outputTokens.toLocaleString()}</div>
+    </div>
+    <div class="cost-kpi highlight-cost">
+      <div class="cost-k">EST. COST</div>
+      <div class="cost-v">$${cost.toFixed(4)}</div>
+    </div>
+  `;
+  
+  const byAgent = snap.tokens_by_agent || {};
+  const agents = Object.entries(byAgent);
+  
+  if (agents.length === 0) {
+    document.getElementById('costBreakdown').innerHTML = 
+      '<div class="hint">No agent calls yet. Inject events or upload documents to begin.</div>';
+    return;
+  }
+  
+  const breakdown = agents
+    .sort((a, b) => b[1].calls - a[1].calls)
+    .map(([agent, data]) => `
+      <div class="agent-cost">
+        <span class="agent-name">${esc(agent.replace(/_/g, ' '))}</span>
+        <span class="agent-stats">${data.calls} calls | ${data.input.toLocaleString()} in | ${data.output.toLocaleString()} out</span>
+      </div>
+    `).join('');
+  
+  document.getElementById('costBreakdown').innerHTML = 
+    '<h4>Usage by Agent</h4>' + breakdown;
 }
 
 function renderKpis(snap) {
@@ -927,8 +1096,9 @@ function renderBoard(snap) {
         if (c.compliance_status) bits.push(String(c.compliance_status).toLowerCase().replace(/_/g, ' '));
         if (c.state === 'HELD_FOR_REVIEW') bits.push('analyst assigned');
         if (c.state === 'DEAD_LETTER') bits.push('dead letter');
-        return `<div class="ccard" style="border-left-color:${color}"
-                     data-case="${esc(c.case_id)}">
+        const isProcessing = c.worker_lock ? 'processing' : '';
+        return `<div class="ccard ${isProcessing}" style="border-left-color:${color}"
+                     data-case="${esc(c.case_id)}" data-state="${esc(c.state)}">
           <div class="cid">${active ? '<span class="working"></span>' : ''}${esc(c.shipment_id || c.case_id)}</div>
           <div class="cmeta">${esc(bits.join(' | ') || 'awaiting first agent')}</div>
         </div>`;
@@ -936,29 +1106,114 @@ function renderBoard(snap) {
     </div>`;
   }).join('');
 
+  // Apply animations for state changes
+  const currentStates = {};
   document.querySelectorAll('.ccard').forEach(el => {
-    el.onclick = () => { openCase = el.dataset.case; renderTrace(); };
+    const caseId = el.dataset.case;
+    const state = el.dataset.state;
+    currentStates[caseId] = state;
+    
+    if (!prevCaseStates[caseId]) {
+      // New case - slide in animation
+      el.classList.add('new-case');
+      setTimeout(() => el.classList.remove('new-case'), 600);
+    } else if (prevCaseStates[caseId] !== state) {
+      // State changed - highlight animation
+      el.classList.add('state-changed');
+      setTimeout(() => el.classList.remove('state-changed'), 1000);
+    }
+    
+    el.onclick = () => { 
+      openCase = caseId; 
+      renderTrace();
+      setFeedFilter(caseId);
+    };
   });
+  prevCaseStates = currentStates;
+}
+
+// Feed filter functions
+function setFeedFilter(caseId) {
+  filterCase = caseId || null;
+  document.getElementById('feedFilter').value = caseId || '';
+  document.getElementById('auditFilter').value = caseId || '';
+  if (lastSnap) renderFeeds(lastSnap);
+}
+
+function clearFeedFilter() {
+  filterCase = null;
+  document.getElementById('feedFilter').value = '';
+  document.getElementById('auditFilter').value = '';
+  if (lastSnap) renderFeeds(lastSnap);
+}
+
+function filterFeed(feedId, caseId) {
+  filterCase = caseId || null;
+  // Sync both dropdowns
+  document.getElementById('feedFilter').value = caseId || '';
+  document.getElementById('auditFilter').value = caseId || '';
+  if (lastSnap) renderFeeds(lastSnap);
+}
+
+function updateFeedFilterOptions(snap) {
+  // Collect unique case IDs from events and audit
+  const caseIds = new Set();
+  (snap.events || []).forEach(e => e.case_id && caseIds.add(e.case_id));
+  (snap.audit || []).forEach(a => a.case_id && caseIds.add(a.case_id));
+  
+  const sorted = [...caseIds].sort();
+  const options = '<option value="">All cases (' + sorted.length + ')</option>' +
+    sorted.map(id => `<option value="${esc(id)}">${esc(id)}</option>`).join('');
+  
+  document.getElementById('feedFilter').innerHTML = options;
+  document.getElementById('auditFilter').innerHTML = options;
+  
+  // Restore selection
+  if (filterCase) {
+    document.getElementById('feedFilter').value = filterCase;
+    document.getElementById('auditFilter').value = filterCase;
+  }
 }
 
 function renderFeeds(snap) {
-  const feed = (snap.events || []).map(e => `<div class="fitem">
-    <div class="ft">${esc(hhmmss(e.at))} | ${esc(e.case_id || '')}</div>
+  // Update filter dropdown options
+  updateFeedFilterOptions(snap);
+  
+  // Filter events by case if filter is active
+  const events = filterCase 
+    ? (snap.events || []).filter(e => e.case_id === filterCase)
+    : (snap.events || []);
+  
+  const feed = events.map(e => `<div class="fitem${filterCase ? ' highlight' : ''}" data-case="${esc(e.case_id || '')}">
+    <div class="ft">${esc(hhmmss(e.at))} | <b>${esc(e.case_id || '')}</b></div>
     <div class="fm">${esc(e.message || '')}</div>
   </div>`).join('');
+  
+  const feedHint = filterCase 
+    ? `<div class="hint">Showing ${events.length} events for case ${filterCase}</div>`
+    : '';
   document.getElementById('feed').innerHTML =
-    feed || '<div class="hint">No events yet. Inject shipment events to begin.</div>';
+    feedHint + (feed || '<div class="hint">No events yet. Inject shipment events to begin.</div>');
 
-  const audit = (snap.audit || []).map(a => {
+  // Filter audit by case if filter is active
+  const audits = filterCase 
+    ? (snap.audit || []).filter(a => a.case_id === filterCase)
+    : (snap.audit || []);
+  
+  const audit = audits.map(a => {
     const d = a.detail || {};
     const extra = d.disposition || d.queue || d.reference || d.note || '';
-    return `<div class="fitem">
-      <div class="ft">${esc(hhmmss(a.at))} | ${esc(a.case_id || '')} | ${esc(a.status || '')}</div>
+    return `<div class="fitem${filterCase ? ' highlight' : ''}" data-case="${esc(a.case_id || '')}">
+      <div class="ft">${esc(hhmmss(a.at))} | <b>${esc(a.case_id || '')}</b> | ${esc(a.status || '')}</div>
       <div class="fm"><b>${esc(a.action || '')}</b>${extra ? ' | ' + esc(extra) : ''}</div>
     </div>`;
   }).join('');
+  
+  const auditHint = filterCase 
+    ? `<div class="hint">Showing ${audits.length} actions for case ${filterCase}</div>`
+    : '';
   document.getElementById('auditfeed').innerHTML =
-    audit || '<div class="hint">No actions taken yet.</div>';
+    auditHint + (audit || '<div class="hint">No actions taken yet.</div>');
 }
 
 function renderTrace() {
@@ -1054,6 +1309,7 @@ async function poll() {
     if (snap.error) throw new Error(snap.error);
     lastSnap = snap;
     renderKpis(snap);
+    renderCostMonitor(snap);
     renderBoard(snap);
     renderFeeds(snap);
     renderTrace();

@@ -26,6 +26,7 @@ import governance
 import orchestrator
 import simulator
 import tools
+import config as model_config
 from store import store_status
 
 from agents import (
@@ -495,6 +496,43 @@ def config():
             "max_bulk_count": int(os.getenv("MAX_BULK_COUNT", "10"))
         }
     })
+
+
+@app.route("/api/v1/config/model", methods=["GET"])
+def get_model_config():
+    """Get current model configuration and available models."""
+    return jsonify({
+        "current_model": model_config.get_model(),
+        "pricing": model_config.get_pricing(),
+        "available_models": model_config.get_all_models()
+    })
+
+
+@app.route("/api/v1/config/model", methods=["POST"])
+def set_model_config():
+    """
+    Change the active AI model at runtime.
+    
+    This allows switching between Gemini models without redeployment.
+    Changes take effect immediately for new requests.
+    """
+    data = request.get_json(silent=True) or {}
+    new_model = data.get("model", "").strip()
+    
+    if not new_model:
+        return jsonify({"error": "model is required"}), 400
+    
+    if model_config.set_model(new_model):
+        return jsonify({
+            "success": True,
+            "model": new_model,
+            "pricing": model_config.get_pricing()
+        })
+    
+    return jsonify({
+        "error": f"Invalid model: {new_model}",
+        "available": list(model_config.PRICING.keys())
+    }), 400
 
 
 # ============== GOVERNANCE: DELEGATION BOUNDARIES ==============

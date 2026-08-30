@@ -21,14 +21,16 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from ._common import Timer, envelope, parse_model_json
+from ._common import Timer, envelope, parse_model_json, extract_tokens
+import config as model_config
 
 PROJECT_ID = os.getenv("PROJECT_ID", "project-93ded24f-21c3-4f1b-a7d")
 LOCATION = os.getenv("LOCATION", "global")
 
 client = genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 
-MODEL_ID = "gemini-3.5-flash"
+def get_model_id():
+    return model_config.get_model()
 
 # Anything the pipeline reasons over has to come out of here, because a field
 # the extractor drops becomes a compliance gap further downstream.
@@ -106,7 +108,7 @@ async def extract_shipment(
 
     with Timer() as timer:
         response = await client.aio.models.generate_content(
-            model=MODEL_ID,
+            model=get_model_id(),
             contents=[
                 types.Content(
                     role="user",
@@ -129,13 +131,16 @@ async def extract_shipment(
         )
 
     parsed, error = parse_model_json(response.text)
+    input_tokens, output_tokens = extract_tokens(response)
     return envelope(
         agent="document_intake",
-        model=MODEL_ID,
+        model=get_model_id(),
         result=parsed,
         error=error,
         raw=response.text or "",
         latency_ms=timer.ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         legacy_key="extraction",
         source_filename=filename,
         source_mime=mime,
@@ -146,7 +151,7 @@ def get_agent_info() -> dict[str, Any]:
     return {
         "name": "VF Logistics Document Intake Agent",
         "version": "1.0.0",
-        "model": MODEL_ID,
+        "model": get_model_id(),
         "project": PROJECT_ID,
         "location": LOCATION,
         "capabilities": [

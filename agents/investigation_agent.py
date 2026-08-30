@@ -1,6 +1,10 @@
 ﻿"""
-VF Logistics AI Investigation Agent - Gemini 3.5 Flash
+VF Logistics AI Investigation Agent - Gemini 3.5 Flash-Lite
 Conducts deep-dive investigations into flagged cases using multi-step reasoning.
+
+This agent uses Gemini 3.5 Flash-Lite for cost-efficient summarization and
+report generation, while heavy-lifting agents (document, fraud, compliance)
+use Gemini 3.5 Flash for complex multimodal reasoning.
 
 Track: The Taskmaster - Autonomous Workflow Automation
 """
@@ -12,7 +16,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from ._common import Timer, envelope, parse_model_json
+from ._common import Timer, envelope, parse_model_json, extract_tokens
+import config as model_config
 
 PROJECT_ID = os.getenv("PROJECT_ID", "project-93ded24f-21c3-4f1b-a7d")
 LOCATION = os.getenv("LOCATION", "global")
@@ -23,7 +28,13 @@ client = genai.Client(
     location=LOCATION
 )
 
-MODEL_ID = "gemini-3.5-flash"
+# Investigation agent uses Flash-Lite for cost-efficient summarization
+# Other agents use Flash for heavy multimodal/reasoning tasks
+MODEL_ID = "gemini-3.5-flash-lite"
+
+def get_model_id():
+    """Investigation agent always uses Flash-Lite for cost efficiency."""
+    return MODEL_ID  # Fixed to flash-lite, not configurable
 
 INVESTIGATION_PROMPT = """
 You are a senior fraud investigator AI for VF Logistics. Your role is to conduct 
@@ -95,7 +106,7 @@ async def investigate_case(case_data: dict[str, Any]) -> dict[str, Any]:
     
     with Timer() as timer:
         response = await client.aio.models.generate_content(
-            model=MODEL_ID,
+            model=get_model_id(),
             contents=[
                 types.Content(
                     role="user",
@@ -113,13 +124,16 @@ async def investigate_case(case_data: dict[str, Any]) -> dict[str, Any]:
         )
 
     parsed, error = parse_model_json(response.text)
+    input_tokens, output_tokens = extract_tokens(response)
     out = envelope(
         agent="investigation",
-        model=MODEL_ID,
+        model=get_model_id(),
         result=parsed,
         error=error,
         raw=response.text or "",
         latency_ms=timer.ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         legacy_key="investigation_result",
         case_id=case_data.get("case_id"),
     )
@@ -213,7 +227,7 @@ async def generate_report(investigation_results: list[dict]) -> dict[str, Any]:
 
     with Timer() as timer:
         response = await client.aio.models.generate_content(
-            model=MODEL_ID,
+            model=get_model_id(),
             contents=[
                 types.Content(
                     role="user",
@@ -228,13 +242,16 @@ async def generate_report(investigation_results: list[dict]) -> dict[str, Any]:
         )
 
     parsed, error = parse_model_json(response.text)
+    input_tokens, output_tokens = extract_tokens(response)
     out = envelope(
         agent="investigation_report",
-        model=MODEL_ID,
+        model=get_model_id(),
         result=parsed,
         error=error,
         raw=response.text or "",
         latency_ms=timer.ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
         legacy_key="report",
     )
     out["cases_analyzed"] = len(investigation_results)
@@ -246,7 +263,7 @@ def get_agent_info() -> dict[str, str]:
     return {
         "name": "VF Logistics AI Investigation Agent",
         "version": "1.0.0",
-        "model": MODEL_ID,
+        "model": get_model_id(),
         "capabilities": [
             "deep_case_investigation",
             "pattern_analysis",

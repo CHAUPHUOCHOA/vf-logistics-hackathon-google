@@ -47,6 +47,7 @@ import model_armor
 import tools
 import untrusted
 import verifier
+import config as model_config
 from agents import (
     analyze_shipment,
     extract_shipment,
@@ -410,6 +411,8 @@ async def _record_step(
             "parse_error": response.get("parse_error", False),
             "at": response.get("at"),
             "result": result,
+            "input_tokens": response.get("input_tokens", 0),
+            "output_tokens": response.get("output_tokens", 0),
         }
     )
     return result
@@ -1253,16 +1256,38 @@ async def snapshot(limit: int = 60) -> dict[str, Any]:
 
     counts: dict[str, int] = {}
     latencies: list[int] = []
+    total_input_tokens = 0
+    total_output_tokens = 0
+    tokens_by_agent: dict[str, dict[str, int]] = {}
+    
     for case in cases:
         counts[case["state"]] = counts.get(case["state"], 0) + 1
         for step in case.get("steps", []) or []:
             if isinstance(step.get("latency_ms"), int):
                 latencies.append(step["latency_ms"])
+            # Aggregate token usage
+            input_t = step.get("input_tokens", 0) or 0
+            output_t = step.get("output_tokens", 0) or 0
+            total_input_tokens += input_t
+            total_output_tokens += output_t
+            
+            agent = step.get("agent", "unknown")
+            if agent not in tokens_by_agent:
+                tokens_by_agent[agent] = {"calls": 0, "input": 0, "output": 0}
+            tokens_by_agent[agent]["calls"] += 1
+            tokens_by_agent[agent]["input"] += input_t
+            tokens_by_agent[agent]["output"] += output_t
 
     in_flight = sum(1 for c in cases if c["state"] not in TERMINAL)
     awaiting_human = sum(1 for c in cases if c["state"] in AWAITING_HUMAN)
 
     readiness = await governance.agent_readiness()
+    
+    # Dynamic pricing based on selected model
+    pricing = model_config.get_pricing()
+    estimated_cost = round(
+        (total_input_tokens * pricing["input"] + total_output_tokens * pricing["output"]) / 1_000_000, 6
+    )
 
     return {
         "cases": cases,
@@ -1274,6 +1299,10 @@ async def snapshot(limit: int = 60) -> dict[str, Any]:
         "agent": readiness,
         "agent_calls": len(latencies),
         "avg_latency_ms": int(sum(latencies) / len(latencies)) if latencies else 0,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "tokens_by_agent": tokens_by_agent,
+        "estimated_cost_usd": estimated_cost,
         "worker": worker_status(),
         "at": utcnow(),
     }
