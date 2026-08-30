@@ -53,13 +53,15 @@ def utcnow() -> str:
 
 # ============== BACKGROUND WORKER ==============
 #
-# Flask request handlers each spin up their own short-lived event loop via
-# asyncio.run(), so the orchestrator cannot live on a request loop. It gets a
-# dedicated thread with a loop that stays alive for the life of the container.
+# Every coroutine in the process runs on this one loop, including Flask request
+# handlers via async_route below. Handlers used to call asyncio.run(), which
+# closes its loop on the way out and left the module-level Vertex AI client
+# holding a dead loop, so the second analysis in a container's life failed.
 #
-# Cloud Run throttles CPU between requests by default, which would freeze this
-# loop the moment a request finishes. Deploy with --no-cpu-throttling and
-# --min-instances=1 so the worker genuinely runs unattended; see README.
+# In WORKER_MODE=poll the loop also drives the pipeline unattended, which needs
+# --no-cpu-throttling and --min-instances=1 because Cloud Run otherwise freezes
+# CPU between requests. The deployed default is WORKER_MODE=ondemand, where
+# request handlers advance the pipeline and no always-on CPU is required.
 
 _worker_loop: asyncio.AbstractEventLoop | None = None
 _worker_lock = threading.Lock()

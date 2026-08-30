@@ -27,8 +27,17 @@ steps:
       - '1'
       - '--timeout'
       - '300'
+      # LOCATION is the Vertex AI endpoint, not the Cloud Run region, and the two
+      # are deliberately different. Gemini 3.5 Flash is only served on the global
+      # endpoint; a regional value here returns 404 NOT_FOUND on the first model
+      # call, so this file used to deploy a container that could not reach a model.
+      # The service still runs in asia-southeast1 - that is the --region above.
       - '--set-env-vars'
-      - 'PROJECT_ID=$PROJECT_ID,LOCATION=asia-southeast1'
+      - 'PROJECT_ID=$PROJECT_ID,LOCATION=global,WORKER_MODE=ondemand,STORE_BACKEND=firestore,DECISIONS_TOPIC=case-decisions,CLAIM_LEASE_SECONDS=120,DOCUMENT_BUCKET=${_DOCUMENT_BUCKET}'
+
+substitutions:
+  # Where uploaded documents are archived for audit. Override per environment.
+  _DOCUMENT_BUCKET: 'vf-shipping-documents-304507056252'
 
 images:
   - 'asia-southeast1-docker.pkg.dev/$PROJECT_ID/vf-logistics/fraud-detection:$COMMIT_SHA'

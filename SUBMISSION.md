@@ -1,6 +1,7 @@
 # Devpost Submission — VF Logistics Autonomous Fraud Detection
 
-Copy-paste material for the Devpost form, plus the demo video script.
+Copy-paste material for the Devpost form. The demo video script lives in
+[`docs/video-script.txt`](docs/video-script.txt).
 
 ---
 
@@ -176,7 +177,10 @@ All three reached terminal state in roughly 30 seconds. Average agent hop was
 
 - **Four specialised agents on two models** — document intake, fraud detection
   and compliance on Gemini 3.5 Flash; investigation on Gemini 3.5 Flash-Lite
-  with extended thinking
+  with extended thinking. The first three resolve their model at call time, so
+  the dashboard can switch them and show the cost difference; investigation is
+  pinned in code, because the hop chosen for being cheap should not be
+  switchable to an expensive model.
 - **Autonomous multi-step workflow** — conditional routing with no human
   step-through
 - **Delegation Boundary** — versioned policy published by a named human; the
@@ -190,14 +194,24 @@ All three reached terminal state in roughly 30 seconds. Average agent hop was
 - **Untrusted input gate** — schema whitelist, forbidden fields, invisible
   character stripping
 - **Document intake** — Gemini 3.5 Flash reads PDFs and images natively; no
-  separate OCR step
+  separate OCR step. Drop a file onto the intake card or use the file picker;
+  both run the same path, and the response does not return until the case has
+  reached a terminal state.
+- **Every case gets reviewable paperwork** — an uploaded original is archived to
+  Cloud Storage and shown as-is; a case that arrived as a data event gets a bill
+  of lading rendered from its record and labelled `SYSTEM-GENERATED`, on the
+  document and in the provenance. A reconstruction is never presented as an
+  original. Requires `DOCUMENT_BUCKET`; without a bucket the archive reports
+  `archived: false` and there is nothing to show.
 - **Identity split** — `vf-fraud-detection` has `aiplatform.user` + `datastore.user`
   + `storage.objectAdmin` but no `pubsub.publisher`; `vf-executor` has no
   `aiplatform.user` — neither service can do everything
 - **Scale-to-zero** — `--min-instances=0`, `WORKER_MODE=ondemand`, lease-based
   claiming, exponential backoff
 - **Human review queue** — cases that hit the boundary's limits or non-waivable
-  triggers go to a named reviewer; SAR drafts require human signoff
+  triggers go to a named reviewer; SAR drafts require human signoff. Each case is
+  coloured by state — red escalated, yellow held or pending — so severity is
+  visible without reading.
 - **Live operations dashboard** — pipeline board, event feed, action log, and a
   per-case trace showing every agent hop with its real latency
 - **Decision Packs** — four synthesised views (integrity/pricing, sanctions,
@@ -216,7 +230,7 @@ All three reached terminal state in roughly 30 seconds. Average agent hop was
 | Agent framework | Google GenAI SDK (`google-genai`), async client |
 | Input security | Google Cloud Model Armor (`asia-southeast1`, `vf-document-intake` template) |
 | Compute | Cloud Run (source deploy → Cloud Build → Artifact Registry), `--min-instances=0` |
-| State | Firestore Native mode in `asia-southeast1` — `cases`, `events`, `audit_log`, `boundaries` |
+| State | Firestore Native mode in `asia-southeast1` — `cases`, `events`, `audit_log`, `delegation_boundaries` |
 | Messaging | Pub/Sub — `shipment-events` inbound, `case-decisions` outbound |
 | Documents | Cloud Storage — source landing zone, processed archive |
 | Web | Flask + gunicorn (1 worker, 8 threads), flask-cors |
@@ -301,103 +315,23 @@ is the commodity.
 
 ---
 
-## Video script (~4 min)
+## Video script
 
-Requirement: must show the problem, the value proposition, the app working, and
-**proof the backend runs on Google Cloud**. Record unedited if you can—the
-judging criteria explicitly reward a live, unedited demo.
+The shooting script lives in [`docs/video-script.txt`](docs/video-script.txt),
+timed scene by scene with the operator actions next to the narration.
 
-### 0:00 – 0:30 · The problem
+It is kept there rather than inline here because it has to stay in step with the
+UI, and a copy in two places drifts. The version that used to sit in this file
+had gone stale in two ways worth recording: it said to click an **Upload
+document** button, when the intake card now accepts a dropped file as well, and
+it summarised the pipeline as "four agents on the GenAI SDK to Gemini 3.5 Flash",
+which contradicts the multi-model split this submission claims as its bonus - the
+investigation agent runs Flash-Lite.
 
-Open the dashboard. Do not click yet.
-
-> "Vietnamese logistics operators lose real money to shipment fraud that
-> threshold rules cannot see. This shipment is priced at 1.2 million dong
-> against a 3 million dong route average—60% under. On its own that reads like
-> a promotion. The shipper has two lifetime transactions. On its own, a new
-> customer. It takes reading those together to see under-invoicing through a
-> shell entity, and that is exactly what a SQL rules engine cannot do."
-
-### 0:30 – 1:00 · The governance differentiator
-
-> "But detecting fraud is only half the problem. Who decides what the agent may
-> do about it? In this system, that answer is a Delegation Boundary—a versioned
-> policy published by a named human. Without an active boundary, the agents can
-> analyse but cannot act. Let me show you."
-
-Click **Governance** tab. Show the current boundary or the SUSPENDED state.
-
-> "This boundary says the agent may release shipments worth up to $25,000 with
-> effective risk below 40 and zero deterministic findings. Anything outside
-> these limits goes to a human. Publishing a new version supersedes the old one,
-> and every action records the boundary version that permitted it."
-
-### 1:00 – 2:00 · Document intake and Model Armor
-
-Click **Upload Document** with a sample PDF.
-
-> "Real shipments start as documents, not JSON. This PDF goes through Model
-> Armor before Gemini sees it—Google Cloud's screening for prompt injection.
-> If it flags something, no model is invoked at all."
-
-Wait for intake to complete.
-
-> "The Document Intake agent just read this bill of lading and transcribed it
-> into a structured record. The transcription is strict: fields like risk_score
-> and decision are forbidden—a document cannot nominate its own outcome."
-
-### 2:00 – 2:45 · Autonomous workflow
-
-Switch to **Operations** tab. The case should be progressing.
-
-> "Watch the pipeline. Fraud detection and compliance screening run in parallel—
-> that is why a case reaches a decision in half the wall time for the same
-> number of model calls."
-
-When the case reaches a terminal state:
-
-> "This case was auto-cleared because effective risk was 12, below the boundary's
-> threshold of 40, and the deterministic validation raised nothing. The agent
-> proposed the outcome; the boundary permitted it; the action executed. One
-> document upload, no further input."
-
-### 2:45 – 3:15 · Proof it runs on Google Cloud
-
-Screen-share the Google Cloud Console. Show in this order:
-
-1. **Cloud Run** → service `vf-fraud-detection` → revision list, region
-   `asia-southeast1`, and the service URL.
-2. **Revision detail** → the `LOCATION=global` and `PROJECT_ID` env vars.
-3. **Logs tab** → the `POST 200 /api/v1/...` entries from the calls you just
-   made on camera. This is the strongest proof—the requests are timestamped
-   seconds ago.
-4. Optionally **Firestore** → the `boundaries` collection showing the published
-   Delegation Boundary.
-
-> "Backend is Cloud Run in asia-southeast1, model calls go to Vertex AI on the
-> global endpoint. Firestore holds the cases, events, and—critically—the
-> delegation boundaries that grant the agent authority."
-
-### 3:15 – 4:00 · Architecture and close
-
-Show `docs/architecture.png`.
-
-> "Browser to Cloud Run to four agents on the GenAI SDK to Gemini 3.5 Flash.
-> Model Armor screens documents before they reach the model. The verifier
-> computes a deterministic risk floor the agent cannot override. And the
-> Delegation Boundary is the only thing that grants authority to act.
->
-> The load-bearing idea: the agent decides what is true, and a published
-> boundary decides what it is allowed to do about it."
-
-### Recording checklist
-
-- [ ] Warm the service first (open `/health`) so cold start does not eat 10s of video
-- [ ] Browser zoom ≥ 125% so text is legible after compression
-- [ ] Cloud Run **Logs** tab shown after the live calls, not before
-- [ ] Total under 4:00
-- [ ] Say the model name out loud at least once
-- [ ] Close all tabs with credentials or unrelated projects visible
+The checklist in that file also covers something not obvious from the UI: the
+board has to be seeded before recording, or the cost meter and the pipeline are
+both empty on camera, and document upload runs synchronously for 30 to 50
+seconds, so the narration over that scene has to be long enough to cover it.
 
 ---
 

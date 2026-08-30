@@ -49,7 +49,7 @@ governance control plane:
 | **Compliance Screening** | Sanctions exposure (OFAC/UN/EU patterns), trade & regulatory compliance, AML indicators. | `temperature=0.1`, runs in parallel with fraud |
 | **AI Investigation** | Multi-step case investigation, pattern analysis, network mapping. | **Gemini 3.5 Flash-Lite**, **extended thinking** — `thinking_budget=8000` |
 
-### Two models, chosen per task
+### Two models by default, chosen per task
 
 The first three agents run **Gemini 3.5 Flash**: document intake needs native
 multimodal PDF reading, and fraud and compliance screening are the calls whose
@@ -118,6 +118,41 @@ analyses and proposes, but [`governance.py`](governance.py)'s execution gate
 refuses every protected action. Verified on the deployed service — before any
 boundary was published, even a demonstrably clean shipment could not be
 released.
+
+### The reviewer always has the paperwork
+
+Work enters two ways. A shipment event arrives on `/api/v1/events/shipment`, or a
+document is uploaded — drag a PDF or a scan onto the **Document intake** card, or
+use the file picker; both paths run the same code. In the deployed
+`WORKER_MODE=ondemand` configuration the upload request also advances the case,
+usually all the way to a terminal state before it responds. It is not a guarantee:
+the drain is bounded by `MAX_CHAIN_STEPS` and `CHAIN_BUDGET_SECONDS`, a case that
+runs out of budget is left where it is for the next trigger to pick up, and under
+`WORKER_MODE=poll` the response returns at `INGESTED` and the loop takes over.
+The status is `202`, not `200`, for that reason.
+
+Whichever way it arrived, **a case is meant to carry a bill of lading a human can
+read.** When a shipper's original was uploaded it is archived to Cloud Storage and
+shown as-is. When the case came from a data event there is no original, so
+[`document_render.py`](document_render.py) renders one from the record and marks
+it `SYSTEM-GENERATED` — on the document itself and in the case provenance
+(`generated: true`, `rendered_from`). A reconstruction is never presented as an
+original. Getting this wrong would corrupt the audit trail the system exists to
+keep.
+
+The honest caveat: this depends on `DOCUMENT_BUCKET` being set. Without it the
+archive step returns `archived: false` and the case has no document to show, which
+is why that variable is flagged in the environment table rather than left as an
+optional extra.
+
+This matters more than it sounds. Asking a human to approve a hold on a risk
+score they cannot check against paperwork is a rubber stamp with extra steps. The
+review queue also colours each case by state — red for escalated, yellow for held
+or pending — because a reviewer should not have to read carefully to see
+severity. It did not always: for a while the queue painted every item yellow,
+which made an escalation look like a routine hold. Green exists in the same map
+for cleared and human-released cases, but those do not appear in this queue by
+definition — you see them on the board.
 
 ---
 
@@ -262,7 +297,7 @@ Requirement check against the hackathon rules:
   audit trail), Pub/Sub (event ingestion and decision fan-out)
 - Works asynchronously in the background -> a worker loop inside the container
   drives cases with no request in flight
-- Multi-step workflow -> three agents chained with conditional branching
+- Multi-step workflow -> four agents chained with conditional branching
 - Takes meaningful action -> shipments are held or released, analysts assigned,
   SAR drafts produced, decisions published
 
@@ -287,7 +322,26 @@ carries the workflow to completion on its own.
 | `/api/v1/orchestrator/state` | GET | Full dashboard projection: cases, events, audit, counters |
 | `/api/v1/orchestrator/case/<case_id>` | GET | One case with every agent hop, latency and action receipt |
 | `/api/v1/orchestrator/tick` | POST | Advance the pipeline one step. Cloud Scheduler fallback; the background loop normally does this. |
-| `/api/v1/orchestrator/reset` | POST | Clear all cases, events and audit records |
+| `/api/v1/orchestrator/reset` | POST | Clear all cases, events and audit records. Published delegation boundaries deliberately survive: clearing a board is a demo convenience, revoking authority is not. |
+| `/api/v1/orchestrator/drain` | POST | Run every pending case to a terminal state. The explicit lever for `WORKER_MODE=ondemand` — usable from Cloud Scheduler or to clear a backlog without waiting for the dashboard to poll it away one case at a time. |
+| `/api/v1/events/document` | POST | Document intake. Multipart `file` (PDF or image). Screens for injection, transcribes, archives the original, then runs the case to a terminal state in the same request. |
+| `/api/v1/events/storage` | POST | Cloud Storage notification sink — ingests a document dropped straight into the bucket. |
+| `/api/v1/ingest/bucket-sweep` | POST | Ingest every unprocessed object in `DOCUMENT_BUCKET`. Recovery path for notifications that were missed. |
+| `/api/v1/simulate/bulk` | POST | Randomised shipments weighted like a real book of business. Capped at `MAX_BULK_COUNT`. |
+
+### Review, governance and configuration
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/api/v1/review/queue` | GET | Everything the agent was not permitted to close, with state, risk and findings |
+| `/api/v1/review/<case_id>/decide` | POST | Record a human decision — release, block or request more information |
+| `/api/v1/review/<case_id>/document` | GET | The case's bill of lading: the shipper's original when one was uploaded, otherwise a `SYSTEM-GENERATED` reconstruction, labelled as such |
+| `/api/v1/governance/agent` | GET | Agent status and the boundary version it is operating under |
+| `/api/v1/governance/boundaries` | GET | Every published boundary version, newest first |
+| `/api/v1/governance/publish` | POST | Publish a new delegation boundary. Supersedes the previous version rather than editing it. |
+| `/api/v1/config` | GET | Effective configuration and thresholds |
+| `/api/v1/config/model` | GET, POST | Read or switch the model used by intake, fraud and compliance. Investigation is pinned and unaffected. |
+| `/internal/execute` | POST | The execution surface. Same codebase, deployed a second time as `vf-executor` with a different service account — that deployment is the only place a protected action actually happens. Not under `/api/v1` because it is not a public API. |
 
 ### Direct agent access
 
@@ -615,21 +669,49 @@ which shows the per-case trace with the real model id and latency on every hop.
 | `FRAUD_CLEAR_BELOW` | Risk below which auto-clear is considered | `40` |
 | `INVESTIGATE_AT` | Risk at or above which investigation always opens | `70` |
 | `DOCUMENT_BUCKET` | Cloud Storage bucket for document archive and stage ingestion. **Set this** — without it no case keeps a reviewable document, and the review panel has nothing to show a human | unset |
-| `MODEL_ARMOR_TEMPLATE` | Model Armor template id; unset disables the gate | unset |
+| `MODEL_ARMOR_TEMPLATE` | Model Armor template id; set to an empty value to disable the gate | `vf-document-intake` |
 | `MODEL_ARMOR_LOCATION` | Model Armor region | `asia-southeast1` |
 | `MODEL_ARMOR_WINDOW_CHARS` | Screening window size — see the findings section for why windowing is required | `400` |
+| `MODEL_ARMOR_MAX_CHARS` | Ceiling on how much document text is screened | `20000` |
 | `EXECUTOR_URL` | Executor service URL; unset means no identity split | unset |
 | `DECISIONS_TOPIC` | Pub/Sub topic for published decisions | `case-decisions` |
 | `NOTIFY_WEBHOOK_URL` | Outbound alert webhook; unset records the payload without sending | unset |
 | `MAX_BULK_COUNT` | Cap on the volume-test endpoint | `10` |
 | `PORT` | Port gunicorn binds to (set by Cloud Run) | `8080` |
+| `GEMINI_MODEL` | Model for intake, fraud and compliance. Investigation ignores it. | `gemini-3.5-flash` |
+| `MAX_DOCUMENT_MB` | Rejection threshold for uploaded documents | `20` |
+| `MAX_ATTEMPTS` | Retries before a case is dead-lettered | `3` |
+| `MAX_CONCURRENT` | Cases advanced in parallel | `3` |
+| `MAX_CHAIN_STEPS` | Hops one case may take before the chain is cut. Guards against a case cycling forever, not a Gemini call budget. | `6` |
+| `CHAIN_BUDGET_SECONDS` | Wall-clock ceiling for one case's chain | `120` |
+| `POLL_SECONDS` | Loop interval in `WORKER_MODE=poll`. Ignored in `ondemand`. | `1.5` |
+| `MODEL_ARMOR_WINDOW_OVERLAP` | Overlap between screening windows, so an injection split across a boundary is still seen whole | `120` |
+| `MODEL_ARMOR_MAX_WINDOWS` | Cap on windows screened per document | `8` |
+| `BOUNDARY_BOOTSTRAP_AUTHOR` | Name recorded as the publisher of the bootstrap boundary. Unset leaves the bootstrap author blank rather than inventing one. | unset |
+| `DRIFT_MIN_SAMPLE` | Decisions required before drift is assessed at all | `8` |
+| `DRIFT_MAX_AUTO_RELEASE_RATE` | Auto-release rate above which the agent is flagged as drifting permissive | `0.85` |
+| `DRIFT_MAX_VETO_RATE` | Human-veto rate above which the agent's judgement is flagged as untrusted | `0.60` |
+| `DRIFT_MAX_INJECTION_RATE` | Injection-attempt rate above which intake is flagged as under attack | `0.20` |
 
-The model ID is pinned in code in each agent module rather than read from the
-environment, so a misconfigured deploy cannot silently downgrade to a model the
-hackathon rules disallow. `config.py` holds the shared registry and per-token
-pricing; the investigation agent overrides it to `gemini-3.5-flash-lite`
-unconditionally, so its cost profile cannot be changed by a runtime switch
-either.
+`config.py` holds the shared model registry and per-token pricing. Three of the
+four agents — document intake, fraud detection and compliance — resolve their
+model at call time through `model_config.get_model()`, which reads `GEMINI_MODEL`
+at import and can be changed at runtime via `POST /api/v1/config/model` or the
+dashboard dropdown. The registry holds four ids: `gemini-3.5-flash` (default),
+`gemini-3.5-flash-lite`, `gemini-3.6-flash` and `gemini-3.7-flash`.
+
+The investigation agent is the exception: `agents/investigation_agent.py` pins
+`gemini-3.5-flash-lite` as a module constant, so the one hop chosen for being
+cheap cannot be switched to an expensive model by a runtime call or a
+misconfigured environment variable.
+
+This is worth stating plainly because an earlier version of this section claimed
+the opposite — that every model id was pinned in code and therefore immune to a
+bad deploy. It is not. A wrong `GEMINI_MODEL` will silently move three agents
+onto a different model, and the switch is deliberately exposed over HTTP so the
+cost comparison in the dashboard is real rather than described. If you need the
+stronger guarantee, remove the setter at `config.py:50` and the
+`POST /api/v1/config/model` route in `main.py`.
 
 ### A note on cost
 
@@ -655,9 +737,12 @@ from a document". So on exactly the volume path the system is built for, a perso
 was being asked to release or hold a container on a risk score and a state label,
 with nothing to check either against. That is a rubber stamp with extra steps.
 
-Now every case carries a document. Event-sourced shipments are rendered into a
+Now a case carries a document. Event-sourced shipments are rendered into a
 bill of lading (`document_render.py`) and archived beside real uploads, so
-`provenance.uri` always resolves and the reviewer always has something to read.
+`provenance.uri` resolves and the reviewer has something to read whenever
+`DOCUMENT_BUCKET` is configured — without a bucket the archive step reports
+`archived: false` and there is nothing to show, which is the one case where this
+still fails.
 The rendering is labelled `SYSTEM-GENERATED` on the page and `generated: true` in
 the provenance, and the panel says so above the viewer: it is a faithful
 rendering of the event that opened the case, not a scan of a shipper's original.
@@ -679,6 +764,20 @@ module level, so it held a reference to a loop that no longer existed and the
 looked intermittent because Cloud Run kept starting fresh instances, and a single
 curl against a cold container always passed. Every coroutine in the process now
 runs on the one long-lived worker loop the orchestrator already uses.
+
+**Documenting a constraint is not the same as enforcing it.** This README states
+in two places that `LOCATION` must be `global`, and `cloudbuild.yaml` set it to
+`asia-southeast1` — the exact value described two paragraphs below as returning
+`404 NOT_FOUND`. The Cloud Build path was never the one used to deploy by hand,
+so nothing exercised it. A constraint that matters belongs in the file that
+applies it, with the reason next to it, not only in prose.
+
+**A UI can invite an action it does not implement.** The intake card read "Drop a
+bill of lading…" and had no drop handler, so dropping a PDF made the browser
+navigate away from the dashboard and open the file. Every test had used the file
+picker, so nothing caught it until the demo was scripted shot by shot. The fix
+routes a dropped file into the existing input and clicks the existing button —
+one upload path to keep correct rather than two that drift apart.
 
 **Gemini 3.5 Flash is not on regional endpoints.** `us-central1` and
 `asia-southeast1` both returned `404 NOT_FOUND` for
@@ -725,6 +824,31 @@ Chat endpoint.
 
 ---
 
+## Screenshots
+
+[`docs/screenshots/`](docs/screenshots) holds the 13 images submitted to the
+Devpost gallery, all 3000x2000. They were captured against one board state so
+they are mutually consistent — the counters in `01` are the same run as the cases
+in `04`.
+
+| | |
+|---|---|
+| `01-autonomous-operations.png` | Board, controls and outcome counters |
+| `02-cost-and-agent-usage.png` | Per-agent tokens and dollars for the run |
+| `03-live-event-feed-and-actions.png` | Event feed and actions taken on the operator's behalf |
+| `04-review-queue.png` | Queue coloured by state |
+| `05-case-evidence-fraud-agent.png` | Case detail and fraud findings |
+| `06-compliance-and-investigation.png` | Compliance and investigation output, with model and latency |
+| `07-source-document-original.png` | A shipper's uploaded PDF beside the deterministic findings |
+| `08-findings-and-human-decision.png` | Deterministic checks and the release / block / request-info controls |
+| `09-generated-bill-of-lading.png` | `SYSTEM-GENERATED` reconstruction for an event-sourced case |
+| `10-delegation-boundary.png` | The boundary the agent is operating under |
+| `11-boundary-publish-and-history.png` | Machine-readable permissions and version history |
+| `12-single-agent-console.png` | One agent in isolation |
+| `13-prompt-injection-blocked.png` | A document denied before any model was invoked |
+
+---
+
 ## Repository layout
 
 ```
@@ -756,7 +880,9 @@ Chat endpoint.
 ├── docs/
 │   ├── architecture.html         Diagram source
 │   ├── architecture.png          Diagram submitted to Devpost
-│   └── VIDEO_SCRIPT.md           Demo recording script
+│   ├── PROJECT_STORY.md          What was built and what it cost to learn
+│   ├── video-script.txt          Demo shooting script + pre-recording checklist
+│   └── screenshots/              The 13 images in the Devpost gallery, 3000x2000
 ├── Dockerfile                    python:3.11-slim + gunicorn
 ├── cloudbuild.yaml               Cloud Build config
 ├── requirements.txt
