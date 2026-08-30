@@ -31,3 +31,11 @@ htmlcov/
 
 # Personal recording notes, not part of the submission
 docs/video-script.txt
+
+# Demo-video production tooling and its output. Useful locally, but it builds a
+# narration track rather than any part of the service, so it stays out of the repo.
+tools_build_narration.py
+build/
+
+# Throwaway probes and scratch files
+tmp_*
