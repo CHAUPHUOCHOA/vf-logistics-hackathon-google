@@ -1,7 +1,7 @@
 # Devpost Submission — VF Logistics Autonomous Fraud Detection
 
-Copy-paste material for the Devpost form. The demo video script lives in
-[`docs/video-script.txt`](docs/video-script.txt).
+Copy-paste material for the Devpost form. The demo shooting script is kept
+outside the repository — it is recording notes, not part of the submission.
 
 ---
 
@@ -317,21 +317,22 @@ is the commodity.
 
 ## Video script
 
-The shooting script lives in [`docs/video-script.txt`](docs/video-script.txt),
-timed scene by scene with the operator actions next to the narration.
+The shooting script is deliberately not in this repository. It is operator notes
+for one recording session, it has to track the UI shot by shot, and a copy that
+lives next to the submission drifts from both.
 
-It is kept there rather than inline here because it has to stay in step with the
-UI, and a copy in two places drifts. The version that used to sit in this file
-had gone stale in two ways worth recording: it said to click an **Upload
-document** button, when the intake card now accepts a dropped file as well, and
-it summarised the pipeline as "four agents on the GenAI SDK to Gemini 3.5 Flash",
-which contradicts the multi-model split this submission claims as its bonus - the
-investigation agent runs Flash-Lite.
+The version that used to sit inline here is the argument for that. It had gone
+stale in two ways: it said to click an **Upload document** button, when the intake
+card now accepts a dropped file as well, and it summarised the pipeline as "four
+agents on the GenAI SDK to Gemini 3.5 Flash", which contradicts the multi-model
+split this submission claims as its bonus — the investigation agent runs
+Flash-Lite.
 
-The checklist in that file also covers something not obvious from the UI: the
-board has to be seeded before recording, or the cost meter and the pipeline are
-both empty on camera, and document upload runs synchronously for 30 to 50
-seconds, so the narration over that scene has to be long enough to cover it.
+Two things worth knowing before recording, because neither is visible in the UI:
+the board has to be seeded first or the cost meter and the pipeline are both empty
+on camera, and a document upload takes roughly 30 to 50 seconds to reach a
+terminal state, so the narration over that scene has to be long enough to cover
+it.
 
 ---
 

@@ -881,7 +881,6 @@ in `04`.
 │   ├── architecture.html         Diagram source
 │   ├── architecture.png          Diagram submitted to Devpost
 │   ├── PROJECT_STORY.md          What was built and what it cost to learn
-│   ├── video-script.txt          Demo shooting script + pre-recording checklist
 │   └── screenshots/              The 13 images in the Devpost gallery, 3000x2000
 ├── Dockerfile                    python:3.11-slim + gunicorn
 ├── cloudbuild.yaml               Cloud Build config

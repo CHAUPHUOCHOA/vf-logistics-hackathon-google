@@ -28,3 +28,6 @@ Thumbs.db
 # Test coverage
 htmlcov/
 .coverage
+
+# Personal recording notes, not part of the submission
+docs/video-script.txt
