@@ -1364,11 +1364,40 @@ document.getElementById('docup').onclick = async (ev) => {
 
     if (!d.accepted) throw new Error(d.error || `HTTP ${r.status}`);
 
+    // Injection blocked before the model ran: there is no transcription to show,
+    // and rendering the empty extraction made a deliberate block look like a
+    // failure. Report the block itself instead.
+    if (d.blocked || (d.security && d.security.model_invoked === false)) {
+      const ma = (d.security && d.security.model_armor) || {};
+      const scr = (d.security && d.security.injection_screening) || {};
+      const findings = scr.findings || [];
+      outEl.innerHTML = `
+        <div class="flag" style="border-left-color:var(--red)">
+          <span class="ty">Blocked before the model | case ${esc(d.case_id)} | ${esc(d.state)}</span>
+          <p>The document carried instructions aimed at the model. It was screened
+          in overlapping windows <b>before</b> Gemini was invoked, so nothing was
+          transcribed and no shipment record was created.</p>
+          <p>Model Armor: <b>${esc(ma.match_state || 'n/a')}</b>${ma.confidence ? ' at ' + esc(ma.confidence) : ''}
+          ${ma.windows_screened ? ' | ' + esc(ma.windows_screened) + ' window(s) screened' : ''}
+          | model invoked: <b>false</b></p>
+          ${findings.length ? `<p>Independent pattern screen also matched:</p>
+            <ul class="recs">${findings.slice(0, 5).map(f =>
+              `<li>${esc(f.type)}: ${esc(f.excerpt)}</li>`).join('')}</ul>` : ''}
+          <p>Routed to a human. The attempt is recorded on the case trace rather
+          than discarded.</p>
+        </div>`;
+      input.value = '';
+      await poll();
+      btn.disabled = false;
+      btn.textContent = 'Upload document';
+      return;
+    }
+
     const x = d.extracted || {};
     const notes = x.extraction_notes || [];
     outEl.innerHTML = `
       <div class="flag" style="border-left-color:var(--green)">
-        <span class="ty">Extracted in ${esc(d.latency_ms)}ms | case ${esc(d.case_id)} opened</span>
+        <span class="ty">Extracted in ${esc(d.latency_ms ?? '-')}ms | case ${esc(d.case_id)} opened</span>
         <p>
           ${esc(x.shipment_id || '?')} |
           ${esc(x.origin || '?')} - ${esc(x.destination || '?')} |
