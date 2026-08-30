@@ -141,7 +141,7 @@ Here it was a logged warning and a held container.
 Three of the five problems above were found by running the system and reading the
 output properly, and none of them by re-reading source.
 
-## What's next
+## What's next for VF Logistics — Governed Autonomous Fraud Detection
 
 Attaching the boundary to a real approval workflow rather than a published JSON
 document; broadening the deterministic floors with a trade-compliance specialist;
