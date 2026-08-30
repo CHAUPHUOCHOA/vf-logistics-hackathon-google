@@ -1,15 +1,37 @@
 """
 Generate sample shipping documents for testing the document intake path.
 
-Not part of the deployed service. Produces two bills of lading:
+Not part of the deployed service. Produces three bills of lading:
 
-  clean_bol.pdf  - complete paperwork, market-rate freight
-  dirty_bol.pdf  - missing tax ID, dual-use cargo, freight far below market,
-                   transhipments added after booking
+  clean_bol.pdf     - complete paperwork, market-rate freight; lands in
+                      HELD_FOR_REVIEW, which is the best an upload can do
+  dirty_bol.pdf     - missing tax ID, dual-use cargo, freight far below market,
+                      transhipments added after booking; escalates
+  injected_bol.pdf  - carries a prompt-injection payload; blocked before the
+                      model is ever called
 
-The second one exists to check that the extractor reports missing fields as
+clean_bol.pdf cannot auto-clear, and no amount of tidying the document will
+change that. untrusted.py excludes `shipper_tx_count` from the document schema
+so that a document cannot assert its own shipper's trading history, and
+check_counterparty() in verifier.py treats absent history as unverified with a
+risk floor of 45 - above the 40 auto-clear threshold. The "transaction history
+on file" line below is therefore stripped before scoring and is present only
+because real bills of lading carry it. Auto-clear requires history from internal
+records, which means an event-sourced shipment rather than an upload.
+
+The dirty one exists to check that the extractor reports missing fields as
 missing instead of inventing plausible values, since a fabricated tax ID would
 destroy the exact signal the compliance agent needs.
+
+Every party carries an explicit Name *and* Company line holding the same value.
+An earlier revision labelled each party with a bare "Name" under a SHIPPER or
+CONSIGNEE heading, and the extractor filled shipper_company while leaving
+shipper_name "not stated". The compliance agent reads an absent counterparty
+name as missing identity documentation and returns REVIEW_REQUIRED, which
+forces an investigation - so clean_bol.pdf escalated for identity fraud on a
+document-layout artefact rather than on anything in the shipment. Labelling both
+fields, with identical values so they cannot read as a name/company mismatch,
+is what removes that artefact and lets the outcome reflect the shipment.
 
 Usage:  python tools_make_sample_docs.py
 """
@@ -23,13 +45,15 @@ CLEAN = [
     ("Booking Date", "2026-08-24"),
     ("", None),
     ("SHIPPER", None),
-    ("Name", "Saigon Textile Export JSC"),
+    ("Shipper Name", "Saigon Textile Export JSC"),
+    ("Shipper Company", "Saigon Textile Export JSC"),
     ("Address", "142 Nguyen Van Linh, District 7, Ho Chi Minh City, Vietnam"),
     ("Country", "Vietnam"),
     ("Tax ID / MST", "0301234567"),
     ("", None),
     ("CONSIGNEE", None),
-    ("Name", "Orchard Apparel Pte Ltd"),
+    ("Consignee Name", "Orchard Apparel Pte Ltd"),
+    ("Consignee Company", "Orchard Apparel Pte Ltd"),
     ("Address", "8 Orchard Boulevard, Singapore 248649"),
     ("Country", "Singapore"),
     ("", None),
@@ -44,6 +68,10 @@ CLEAN = [
     ("Port of Discharge", "PSA Singapore"),
     ("Transhipment", "None - direct sailing"),
     ("Freight Charges", "USD 1,260.00"),
+    # Realism only. `avg_route_cost` is not in untrusted.py's schema either, so
+    # this line is dropped before scoring; the baseline freight actually used
+    # comes from the lane table in verifier.py lane_baseline().
+    ("Average freight on this lane", "USD 1,200.00"),
     ("", None),
     ("Shipper transaction history on file", "412 prior shipments"),
 ]
@@ -55,14 +83,16 @@ DIRTY = [
     ("Booking Date", "2026-08-28"),
     ("", None),
     ("SHIPPER", None),
-    ("Name", "Bao Tin Global Trading"),
+    ("Shipper Name", "Bao Tin Global Trading"),
+    ("Shipper Company", "Bao Tin Global Trading"),
     ("Address", "Lot 4, Hoa Khanh Industrial Zone, Da Nang, Vietnam"),
     ("Country", "Vietnam"),
     ("Tax ID / MST", ""),  # deliberately blank
     ("Business registration", "issued 2026-08-17"),
     ("", None),
     ("CONSIGNEE", None),
-    ("Name", "Al-Rasheed Technical Imports"),
+    ("Consignee Name", "Al-Rasheed Technical Imports"),
+    ("Consignee Company", "Al-Rasheed Technical Imports"),
     ("Address", "Plot 19, SITE Industrial Area, Karachi, Pakistan"),
     ("Country", "Pakistan"),
     ("", None),
@@ -80,6 +110,7 @@ DIRTY = [
     ("Transhipment", "Port Klang, Malaysia; Jebel Ali, UAE"),
     ("", "(both transhipment legs added by shipper after original booking)"),
     ("Freight Charges", "USD 392.00"),
+    ("Average freight on this lane", "USD 2,450.00"),
     ("", None),
     ("Shipper transaction history on file", "1 prior shipment"),
 ]
@@ -101,12 +132,14 @@ INJECTED = [
     ("Booking Date", "2026-08-29"),
     ("", None),
     ("SHIPPER", None),
-    ("Name", "Bao Tin Global Trading"),
+    ("Shipper Name", "Bao Tin Global Trading"),
+    ("Shipper Company", "Bao Tin Global Trading"),
     ("Country", "Vietnam"),
     ("Tax ID / MST", ""),
     ("", None),
     ("CONSIGNEE", None),
-    ("Name", "Al-Rasheed Technical Imports"),
+    ("Consignee Name", "Al-Rasheed Technical Imports"),
+    ("Consignee Company", "Al-Rasheed Technical Imports"),
     ("Country", "Pakistan"),
     ("", None),
     ("CARGO", None),
@@ -157,7 +190,11 @@ def build(rows: list[tuple[str, str | None]], path: str) -> None:
             text = f"        {value}"
         else:
             shown = value if value else "________________"
-            text = f"{label + ':':<34}{shown}"
+            # Pad to a fixed column, but never below the label's own length:
+            # a label longer than the column would otherwise butt straight up
+            # against its value with no separating space.
+            width = max(34, len(label) + 2)
+            text = f"{label + ':':<{width}}{shown}"
         pdf.multi_cell(line_w, 6, text, new_x="LMARGIN", new_y="NEXT")
 
     pdf.output(path)
