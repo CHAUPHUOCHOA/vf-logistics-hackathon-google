@@ -41,6 +41,7 @@ import os
 import time
 from typing import Any
 
+import document_render
 import document_store
 import governance
 import model_armor
@@ -172,6 +173,27 @@ async def ingest_shipment(
         "created_at": utcnow(),
         "updated_at": utcnow(),
     }
+    # Every case must be reviewable against paperwork. A case that arrived as a
+    # structured event has none, so the event is rendered into a bill of lading
+    # and archived alongside document-sourced cases. It is flagged `generated`
+    # so the reviewer is never shown a reconstruction as if it were an original.
+    # Document-sourced cases are skipped: ingest_document archives the real file
+    # a moment later, and rendering one here would only be overwritten.
+    if source != "document" and not case["provenance"].get("uri"):
+        rendered = document_render.render_bill_of_lading(shipment, case_id, source)
+        if rendered:
+            filename = f"{shipment_id}-bill-of-lading.pdf"
+            receipt = await document_store.archive(
+                rendered, filename, "application/pdf", case_id
+            )
+            case["provenance"] = {
+                **case["provenance"],
+                "filename": filename,
+                "generated": True,
+                "rendered_from": source,
+                **receipt,
+            }
+
     await store.put_case(case)
     await emit(
         case_id,

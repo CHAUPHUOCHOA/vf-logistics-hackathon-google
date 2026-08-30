@@ -19,3 +19,7 @@ flask-cors>=4.0.0
 python-dotenv>=1.0.0
 pypdf>=4.0.0
 httpx>=0.24.0
+
+# fpdf2 renders event-sourced shipments into a bill of lading so every case has
+# paperwork a human can review, not only the ones uploaded as a document.
+fpdf2>=2.7.0

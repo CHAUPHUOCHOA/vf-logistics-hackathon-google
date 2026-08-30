@@ -614,7 +614,7 @@ which shows the per-case trace with the real model id and latency on every hop.
 | `CLAIM_LEASE_SECONDS` | How long a claimed case stays claimed before another worker may take it | `180` |
 | `FRAUD_CLEAR_BELOW` | Risk below which auto-clear is considered | `40` |
 | `INVESTIGATE_AT` | Risk at or above which investigation always opens | `70` |
-| `DOCUMENT_BUCKET` | Cloud Storage bucket for document archive and stage ingestion | unset |
+| `DOCUMENT_BUCKET` | Cloud Storage bucket for document archive and stage ingestion. **Set this** — without it no case keeps a reviewable document, and the review panel has nothing to show a human | unset |
 | `MODEL_ARMOR_TEMPLATE` | Model Armor template id; unset disables the gate | unset |
 | `MODEL_ARMOR_LOCATION` | Model Armor region | `asia-southeast1` |
 | `MODEL_ARMOR_WINDOW_CHARS` | Screening window size — see the findings section for why windowing is required | `400` |
@@ -647,6 +647,29 @@ clearing a backlog from a script or Cloud Scheduler.
 ---
 
 ## Findings & learnings
+
+**A human reviewer with no paperwork is not a control.** The review panel showed
+the source PDF only for cases uploaded as a document; cases that arrived as a
+Pub/Sub event or from the bulk simulator displayed "this case did not originate
+from a document". So on exactly the volume path the system is built for, a person
+was being asked to release or hold a container on a risk score and a state label,
+with nothing to check either against. That is a rubber stamp with extra steps.
+
+Now every case carries a document. Event-sourced shipments are rendered into a
+bill of lading (`document_render.py`) and archived beside real uploads, so
+`provenance.uri` always resolves and the reviewer always has something to read.
+The rendering is labelled `SYSTEM-GENERATED` on the page and `generated: true` in
+the provenance, and the panel says so above the viewer: it is a faithful
+rendering of the event that opened the case, not a scan of a shipper's original.
+Passing a reconstruction off as an original would corrupt the audit trail the
+system exists to keep.
+
+The same review revealed the archive had never run in production at all —
+`DOCUMENT_BUCKET` was unset on the Cloud Run service, so `document_store.archive`
+returned `{"archived": false, "reason": "DOCUMENT_BUCKET not configured"}` and
+even document-sourced cases had no viewable original. The graceful degradation
+worked exactly as designed, which is why it went unnoticed: ingestion never
+failed, it just quietly stopped keeping evidence.
 
 **Gemini 3.5 Flash is not on regional endpoints.** `us-central1` and
 `asia-southeast1` both returned `404 NOT_FOUND` for
@@ -705,6 +728,7 @@ Chat endpoint.
 ├── untrusted.py                  Schema whitelist for document-sourced fields
 ├── model_armor.py                Windowed prompt-injection screening
 ├── store.py                      Case/event/audit state (Firestore, memory fallback)
+├── document_render.py            Renders event-sourced shipments as a bill of lading
 ├── document_store.py             Cloud Storage document archive
 ├── executor_client.py            Calls the split-identity executor service
 ├── tools.py                      Actions taken on the operator's behalf

@@ -1656,9 +1656,17 @@ function renderReview(cases) {
     <div class="sec">
       <h3>Source document</h3>
       ${hasDoc
-        ? `<iframe class="docframe" src="/api/v1/review/${encodeURIComponent(c.case_id)}/document"></iframe>`
-        : `<div class="hint">This case did not originate from a document
-             (${esc((c.provenance || {}).reason || c.source || 'internal event')}).</div>`}
+        ? `${(c.provenance || {}).generated
+              ? `<div class="hint">Rendered from the shipment event that opened this
+                   case (${esc((c.provenance || {}).rendered_from || c.source || 'event')}).
+                   This is the received record as a bill of lading, not a scan of a
+                   shipper's original.</div>`
+              : `<div class="hint">Original document as uploaded
+                   (${esc((c.provenance || {}).filename || 'document.pdf')}).</div>`}
+           <iframe class="docframe" src="/api/v1/review/${encodeURIComponent(c.case_id)}/document"></iframe>`
+        : `<div class="hint">No document is available for this case
+             (${esc((c.provenance || {}).reason || c.source || 'internal event')}).
+             Do not release without one.</div>`}
     </div>
 
     ${(val.findings || []).length ? `<div class="sec">
