@@ -77,6 +77,15 @@ def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
 
         # 60% clean, 30% suspicious, 10% clearly bad. At a batch size of 10 this
         # reliably produces at least one of each rather than ten clean ones.
+        #
+        # `weight_range` and `value_per_kg` are per profile on purpose. They used to
+        # be shared - weight 300-2600 kg at 8-70 USD/kg, a median around 56,000 USD -
+        # which is more than twice the 25,000 USD ceiling the delegation boundary
+        # grants for auto-release. So even a flawless shipment breached delegation on
+        # value alone and no case could ever clear autonomously. A clean consignment
+        # now sits inside the boundary by construction (at most 1,200 kg x 18 USD/kg
+        # = 21,600 USD), which is what a low-value routine shipment looks like. The
+        # ceiling itself is untouched: the control is the point, not the obstacle.
         roll = random.random()
         if roll < 0.60:
             profile = "clean"
@@ -85,6 +94,7 @@ def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
             tx = random.randint(80, 900)
             tax_id = f"0{random.randint(100000000, 999999999)}"
             transit = "None"
+            weight_range, value_per_kg = (300, 1_200), (8, 18)
         elif roll < 0.90:
             profile = "suspicious"
             cargo, hs = random.choice(benign_cargo)
@@ -92,6 +102,7 @@ def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
             tx = random.randint(3, 15)
             tax_id = f"0{random.randint(100000000, 999999999)}"
             transit = "None"
+            weight_range, value_per_kg = (300, 2_600), (8, 70)
         else:
             profile = "bad"
             cargo, hs = random.choice(sensitive_cargo)
@@ -100,9 +111,10 @@ def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
             tax_id = "not provided"
             transit = "Port Klang, Malaysia; Jebel Ali, UAE"
             route += ", two unscheduled transhipments added after booking"
+            weight_range, value_per_kg = (800, 2_600), (30, 70)
 
-        weight = random.randint(300, 2_600)
-        value = round(weight * random.uniform(8, 70), 2)
+        weight = random.randint(*weight_range)
+        value = round(weight * random.uniform(*value_per_kg), 2)
 
         # One entity per party, reused for name and company. Drawing them
         # independently produced a different shipper name than shipper company on
