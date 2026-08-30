@@ -1530,6 +1530,80 @@ function renderReview(cases) {
   const sec = (c.input_security || {}).injection_screening || {};
   const hasDoc = !!(c.provenance || {}).uri;
 
+  // A reviewer cannot be asked to release or block a container on a state label
+  // and a risk number alone. Everything the agents produced is on the case, so
+  // put it in front of the person who has to sign.
+  const ship = c.shipment || {};
+  const byAgent = {};
+  for (const s of (c.steps || [])) byAgent[s.agent] = s;
+
+  const bullets = (arr, limit = 6) => (arr && arr.length)
+    ? `<ul class="recs">${arr.slice(0, limit).map(v => `<li>${esc(
+        typeof v === 'string' ? v : JSON.stringify(v))}</li>`).join('')}</ul>`
+    : '';
+
+  const money = (v, cur) => (v === null || v === undefined || v === '')
+    ? 'not stated'
+    : `${esc(Number(v).toLocaleString())} ${esc(cur || ship.currency || '')}`;
+
+  const hop = (name, label) => {
+    const s = byAgent[name];
+    if (!s) return '';
+    const r = s.result || {};
+    let body = '';
+    if (name === 'fraud_detection') {
+      body = `<p>Risk <b>${esc(r.risk_score ?? '-')}</b>
+        (${esc(r.risk_level || 'level not stated')})${
+        r.confidence ? ` | confidence ${esc(r.confidence)}` : ''}</p>
+        ${bullets(r.flags)}${bullets(r.recommendations, 4)}`;
+    } else if (name === 'compliance') {
+      body = `<p>Status <b>${esc(r.compliance_status || '-')}</b>${
+        r.compliance_score !== undefined ? ` | score ${esc(r.compliance_score)}` : ''}</p>
+        ${bullets(r.sanctions_hits)}${bullets(r.regulatory_issues)}
+        ${bullets(r.risk_factors)}${bullets(r.required_actions, 4)}`;
+    } else {
+      body = `<p>${esc(r.summary || 'no summary returned')}</p>
+        ${r.fraud_pattern ? `<p>Pattern: <b>${esc(r.fraud_pattern)}</b></p>` : ''}
+        ${r.exposure_estimate ? `<p>Exposure: <b>${esc(r.exposure_estimate)}</b></p>` : ''}
+        ${bullets(r.evidence)}${bullets(r.recommended_actions, 4)}`;
+    }
+    return `<div class="flag" style="border-left-color:var(--blue)">
+      <div class="top">
+        <span class="ty">${esc(label)}</span>
+        <span class="sev" style="background:#1e2b45;color:#cfe0ff">${
+          esc(s.model || '-')}${s.latency_ms ? ' | ' + esc(s.latency_ms) + 'ms' : ''}</span>
+      </div>
+      ${body}
+    </div>`;
+  };
+
+  const evidence = `
+    <div class="sec">
+      <h3>What is being shipped</h3>
+      <div class="flag" style="border-left-color:var(--muted)">
+        <p>${esc(ship.cargo_description || 'cargo not stated')}${
+          ship.hs_code ? ` | HS ${esc(ship.hs_code)}` : ''}</p>
+        <p>Declared value ${money(ship.declared_value)}${
+          ship.weight_kg ? ` | ${esc(ship.weight_kg)} kg` : ''}${
+          ship.shipping_cost !== undefined ? ` | freight ${money(ship.shipping_cost)}` : ''}${
+          ship.avg_route_cost !== undefined ? ` (route average ${money(ship.avg_route_cost)})` : ''}</p>
+        <p>${esc(ship.origin || '?')} &rarr; ${esc(ship.destination || '?')}${
+          ship.transit_points ? ` via ${esc(ship.transit_points)}` : ''}</p>
+        <p>Shipper ${esc(ship.shipper_company || 'not stated')}${
+          ship.shipper_country ? ` (${esc(ship.shipper_country)})` : ''}
+          &middot; Consignee ${esc(ship.receiver_company || 'not stated')}${
+          ship.receiver_country ? ` (${esc(ship.receiver_country)})` : ''}</p>
+      </div>
+    </div>
+
+    ${(byAgent.fraud_detection || byAgent.compliance || byAgent.investigation) ? `
+    <div class="sec">
+      <h3>What the agents found</h3>
+      ${hop('fraud_detection', 'Fraud detection')}
+      ${hop('compliance', 'Compliance screening')}
+      ${hop('investigation', 'Investigation')}
+    </div>` : ''}`;
+
   el.innerHTML = `
     <h2>${esc(c.shipment_id || c.case_id)}</h2>
     <div class="hint">
@@ -1559,6 +1633,8 @@ function renderReview(cases) {
         <p>${esc(d.reason)}</p>
       </div>`).join('')}
     </div>` : ''}
+
+    ${evidence}
 
     <div class="sec">
       <h3>Source document</h3>
