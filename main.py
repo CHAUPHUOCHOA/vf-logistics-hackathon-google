@@ -94,7 +94,14 @@ def _on_worker(coro):
 def async_route(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        return asyncio.run(f(*args, **kwargs))
+        # These handlers run on the long-lived worker loop rather than a private
+        # asyncio.run() loop per request. asyncio.run() closes its loop on the way
+        # out, and the Vertex AI client is created once and cached at module level,
+        # so it kept a reference to a loop that no longer existed - the second
+        # single-agent analysis in a container's life failed with "Event loop is
+        # closed". One loop for every coroutine in the process removes the class
+        # of bug rather than the symptom.
+        return _on_worker(f(*args, **kwargs))
     return wrapper
 
 

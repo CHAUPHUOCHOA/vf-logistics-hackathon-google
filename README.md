@@ -671,6 +671,15 @@ even document-sourced cases had no viewable original. The graceful degradation
 worked exactly as designed, which is why it went unnoticed: ingestion never
 failed, it just quietly stopped keeping evidence.
 
+**`asyncio.run()` per Flask request breaks a cached client.** The single-agent
+endpoints were wrapped in a decorator that called `asyncio.run()`, which closes
+its event loop on the way out. The Vertex AI client is built once and cached at
+module level, so it held a reference to a loop that no longer existed and the
+*second* analysis in a container's life failed with `Event loop is closed`. It
+looked intermittent because Cloud Run kept starting fresh instances, and a single
+curl against a cold container always passed. Every coroutine in the process now
+runs on the one long-lived worker loop the orchestrator already uses.
+
 **Gemini 3.5 Flash is not on regional endpoints.** `us-central1` and
 `asia-southeast1` both returned `404 NOT_FOUND` for
 `publishers/google/models/gemini-3.5-flash`. Only `locations/global` served it.
