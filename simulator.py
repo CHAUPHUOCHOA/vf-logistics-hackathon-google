@@ -104,6 +104,15 @@ def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
         weight = random.randint(300, 2_600)
         value = round(weight * random.uniform(8, 70), 2)
 
+        # One entity per party, reused for name and company. Drawing them
+        # independently produced a different shipper name than shipper company on
+        # nearly every record, which the compliance agent correctly read as
+        # mismatched entity documentation - so almost every generated case
+        # escalated on a data-generation artefact rather than on its own risk.
+        # The hand-written fixtures below already keep name and company equal.
+        shipper_entity = f"{random.choice(SHIPPERS)} {random.choice(SUFFIX)}"
+        receiver_entity = f"{random.choice(RECEIVERS)} {random.choice(SUFFIX)}"
+
         out.append(
             {
                 "shipment_id": f"VF-{run_tag}-{i + 1:04d}",
@@ -113,12 +122,12 @@ def bulk_shipments(count: int, run_tag: str) -> list[dict[str, Any]]:
                 "declared_value": value,
                 "shipping_cost": cost,
                 "avg_route_cost": base_cost,
-                "shipper_name": f"{random.choice(SHIPPERS)} {random.choice(SUFFIX)}",
-                "shipper_company": f"{random.choice(SHIPPERS)} {random.choice(SUFFIX)}",
+                "shipper_name": shipper_entity,
+                "shipper_company": shipper_entity,
                 "shipper_country": "Vietnam",
                 "shipper_tax_id": tax_id,
-                "receiver_name": f"{random.choice(RECEIVERS)} {random.choice(SUFFIX)}",
-                "receiver_company": f"{random.choice(RECEIVERS)} {random.choice(SUFFIX)}",
+                "receiver_name": receiver_entity,
+                "receiver_company": receiver_entity,
                 "receiver_country": dest.split(", ")[-1],
                 "cargo_description": cargo,
                 "hs_code": hs,
@@ -143,8 +152,13 @@ SHIPPERS = [
 
 RECEIVERS = [
     "Orchard Apparel", "Daehan Home", "Pacific Sourcing", "Northgate Imports",
-    "Al-Rasheed Technical", "Meridian Trade", "Kowloon Supply", "Baltic Retail",
+    "Meridian Trade", "Kowloon Supply", "Baltic Retail",
 ]
+# "Al-Rasheed Technical" is deliberately excluded from this pool. It carries the
+# sanctions-adjacent keywords the compliance agent is meant to catch, so leaving
+# it in the general draw handed roughly one in eight *clean* shipments a
+# watchlist-linked receiver. The agent escalated those correctly, which made the
+# signal look meaningless. It now appears only in the fixture that intends it.
 
 SUFFIX = ["Co Ltd", "JSC", "Pte Ltd", "Inc", "Trading Co", "Group"]
 

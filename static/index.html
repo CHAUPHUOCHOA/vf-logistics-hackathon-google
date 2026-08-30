@@ -1491,11 +1491,15 @@ async function loadQueue() {
     document.getElementById('qlist').innerHTML = cases.length
       ? cases.map(c => {
           const trig = (c.gate_denials || [])[0];
+          // The board already colours states through OUTCOME_COLOR; the queue was
+          // painting every item yellow, so an escalation looked like a routine hold.
+          const edge = OUTCOME_COLOR[c.state] || 'var(--yellow)';
           return `<div class="qitem ${c.case_id === selectedReview ? 'sel' : ''}"
+                       style="border-left-color:${edge}"
                        data-case="${esc(c.case_id)}">
             <div class="cid">${esc(c.shipment_id || c.case_id)}</div>
             <div class="cmeta">
-              ${esc(c.state)}
+              <span style="color:${edge}">${esc(c.state)}</span>
               ${c.risk_score != null ? ' | risk ' + esc(c.risk_score) : ''}
               ${c.source === 'document' ? ' | document' : ''}
             </div>
