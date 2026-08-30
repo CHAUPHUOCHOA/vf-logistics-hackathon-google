@@ -179,6 +179,13 @@ def scripted_shipments(run_tag: str) -> list[dict[str, Any]]:
     """Three shipments with genuinely different risk profiles."""
     return [
         {
+            # The carton count has to agree with the weight and the value, or
+            # compliance is right to question it. At 1,640 cartons this record
+            # described 0.5 kg and USD 5.85 a carton, and the agent intermittently
+            # returned REVIEW_REQUIRED for undervaluation - which escalated the
+            # case despite a fraud score of 5, making the headline auto-clear demo
+            # a coin flip. 164 cartons is 5 kg and USD 58.50 a carton, or USD 11.71
+            # a kilo: unremarkable for wholesale cotton garments.
             "shipment_id": f"VF-{run_tag}-CLEAN",
             "origin": "Ho Chi Minh City, Vietnam",
             "destination": "Singapore",
@@ -193,7 +200,7 @@ def scripted_shipments(run_tag: str) -> list[dict[str, Any]]:
             "receiver_name": "Orchard Apparel Pte Ltd",
             "receiver_company": "Orchard Apparel Pte Ltd",
             "receiver_country": "Singapore",
-            "cargo_description": "Woven cotton garments, 1,640 cartons, retail packed",
+            "cargo_description": "Woven cotton garments, 164 cartons, retail packed",
             "hs_code": "6205.20",
             "shipper_tx_count": 412,
             "status": "pending",

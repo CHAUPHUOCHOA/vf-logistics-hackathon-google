@@ -55,7 +55,11 @@ BASE = "https://vf-fraud-detection-304507056252.asia-southeast1.run.app"
 EVENT_URL = f"{BASE}/api/v1/events/shipment"
 STATE_URL = f"{BASE}/api/v1/orchestrator/state"
 
-# Filled in this order; see module docstring.
+# Filled in this order; see module docstring. Override on the command line:
+#   python tools_seed_demo_board.py 4 2 2
+# A BLOCKED document case sits in the same "Awaiting human" column as a held
+# case but is not a HELD_FOR_REVIEW state, so a board that needs to read 4/3/2
+# on screen with one blocked case is seeded as 4/2/2 and blocked last.
 ORDER = ["AUTO_CLEARED", "HELD_FOR_REVIEW", "ESCALATED"]
 TARGETS = {"AUTO_CLEARED": 4, "HELD_FOR_REVIEW": 3, "ESCALATED": 2}
 MAX_ATTEMPTS = 30
@@ -217,6 +221,19 @@ def next_target(counts: dict[str, int]) -> str | None:
 
 
 def main() -> int:
+    if len(sys.argv) == 4:
+        try:
+            for bucket, value in zip(ORDER, sys.argv[1:]):
+                TARGETS[bucket] = int(value)
+        except ValueError:
+            print("usage: tools_seed_demo_board.py [auto_cleared held escalated]")
+            return 2
+    elif len(sys.argv) != 1:
+        print("usage: tools_seed_demo_board.py [auto_cleared held escalated]")
+        return 2
+
+    print("Targets: " + "  ".join(f"{k}={TARGETS[k]}" for k in ORDER), flush=True)
+
     run_tag = datetime.now(timezone.utc).strftime("%H%M%S")
     seq = 0
     attempts = 0
